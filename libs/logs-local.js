@@ -3,6 +3,7 @@
 	window.__logs_local_js_loaded = 1;
 
 	var maxBytes = 4 * 1024 * 1024;
+	var autoDownloadAt = Math.floor(maxBytes * 0.75);
 	var purgeIntervalMs = 60 * 1000;
 
 	var key = '';
@@ -11,6 +12,7 @@
 	var loaded = 0;
 	var started = 0;
 	var sink = 0;
+	var autoRotating = 0;
 
 	function pad2(n){
 		return n < 10 ? '0' + n : '' + n;
@@ -19,6 +21,11 @@
 	function ymd(){
 		var d = new Date();
 		return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate());
+	}
+
+	function hms(){
+		var d = new Date();
+		return pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds());
 	}
 
 	function safeName(s){
@@ -76,6 +83,7 @@
 		text += String(line) + '\n';
 		text = trimKeepTail(text, maxBytes);
 		dirty = 1;
+		maybeAutoRotate();
 	}
 
 	function getText(){
@@ -85,6 +93,10 @@
 
 	function fileName(name){
 		return name || ('logs-' + safeName(location.pathname) + '-' + ymd() + '.log');
+	}
+
+	function rotateFileName(){
+		return 'logs-' + safeName(location.pathname) + '-' + ymd() + '-' + hms() + '.log';
 	}
 
 	function download(name){
@@ -113,6 +125,32 @@
 		dirty = 0;
 		try { localStorage.removeItem(key); }
 		catch (e) {}
+	}
+
+	function rotate(name){
+		var out = '';
+
+		load();
+		if (!text) return '';
+
+		out = download(name);
+		reset();
+		return out;
+	}
+
+	function maybeAutoRotate(){
+		if (autoRotating) return;
+		if (!loaded) return;
+		if (text.length < autoDownloadAt) return;
+
+		autoRotating = 1;
+
+		setTimeout(function(){
+			try {
+				rotate(rotateFileName());
+			} catch (e) {}
+			autoRotating = 0;
+		}, 0);
 	}
 
 	function start(){
@@ -150,14 +188,21 @@
 		getText: function(){
 			return getText();
 		},
-		download: function(name){
-			return download(name);
+		download: function(name, resetAfter){
+			var out = download(name);
+
+			if (resetAfter) reset();
+
+			return out;
 		},
 		reset: function(){
 			reset();
 		},
 		purge: function(){
 			purge();
+		},
+		rotate: function(name){
+			return rotate(name);
 		}
 	};
 
@@ -175,6 +220,12 @@
 
 	window.addEventListener('logs-local-download', function(e){
 		var d = e && e.detail ? e.detail : {};
+
+		if (d.reset) {
+			rotate(d.name);
+			return;
+		}
+
 		download(d.name);
 	});
 
@@ -190,7 +241,10 @@
 		var d = e && e.data ? e.data : 0;
 
 		if (!d || typeof d !== 'object') return;
-		if (d.logsLocal === 'download') download(d.name);
+		if (d.logsLocal === 'download') {
+			if (d.reset) rotate(d.name);
+			else download(d.name);
+		}
 		if (d.logsLocal === 'reset') reset();
 		if (d.logsLocal === 'purge') purge();
 	});
