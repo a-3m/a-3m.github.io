@@ -1,3 +1,4 @@
+<!-- File: 1.html -->
 <!DOCTYPE html>
 <html lang="en">
 	<!--
@@ -12,6 +13,203 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<title>Listen Another Music [A3M] AAAM</title>
 		<link rel="stylesheet" href="a3m.0.css?a3m1">
+		<style>
+			.a3m-player {
+				--a3m-volume: 1;
+				--a3m-volume-2: 1;
+				--a3m-volume-pct: 100%;
+				--a3m-volume-pct-2: 100%;
+				--a3m-progress: 0;
+				--a3m-progress-pct: 0%;
+				--a3m-panel: rgba(0, 0, 0, 0.30);
+				--a3m-panel-2: rgba(255, 255, 255, 0.08);
+				--a3m-border: rgba(255, 255, 255, 0.14);
+				--a3m-accent: #7bc3ff;
+				--a3m-accent-2: #ff6de3;
+				--a3m-text: #f2f2f2;
+				--a3m-text-soft: rgba(255, 255, 255, 0.76);
+				--a3m-text-dim: rgba(255, 255, 255, 0.56);
+				position: relative;
+				z-index: 40;
+				max-width: 760px;
+				margin: 24px auto 56px;
+				padding: 18px;
+				border: 1px solid var(--a3m-border);
+				border-radius: 18px;
+				background: var(--a3m-panel);
+				box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+				color: var(--a3m-text);
+				backdrop-filter: blur(8px);
+			}
+
+			.a3m-ui {
+				display: grid;
+				gap: 16px;
+			}
+
+			.a3m-ui-head {
+				display: grid;
+				gap: 4px;
+			}
+
+			.a3m-ui-title {
+				font-size: 1.25rem;
+				line-height: 1.2;
+				font-weight: 700;
+				word-break: break-word;
+			}
+
+			.a3m-ui-subtitle {
+				color: var(--a3m-text-soft);
+				min-height: 1.2em;
+			}
+
+			.a3m-ui-row {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 10px;
+				align-items: center;
+			}
+
+			.a3m-ui-btn {
+				min-width: 52px;
+				height: 40px;
+				padding: 0 14px;
+				border: 1px solid var(--a3m-border);
+				border-radius: 12px;
+				background: var(--a3m-panel-2);
+				color: inherit;
+				font: inherit;
+				line-height: 1;
+				position: relative;
+				z-index: 41;
+			}
+
+			.a3m-ui-btn-toggle,
+			.a3m-ui-btn-mute {
+				min-width: 62px;
+			}
+
+			.a3m-ui-when-playing,
+			.a3m-ui-when-muted {
+				display: none;
+			}
+
+			.a3m-player[data-playing="1"] .a3m-ui-when-playing,
+			.a3m-player[data-muted="1"] .a3m-ui-when-muted {
+				display: inline;
+			}
+
+			.a3m-player[data-playing="1"] .a3m-ui-when-paused,
+			.a3m-player[data-muted="1"] .a3m-ui-when-unmuted {
+				display: none;
+			}
+
+			.a3m-ui-progress-block,
+			.a3m-ui-volume-block {
+				display: grid;
+				gap: 8px;
+			}
+
+			.a3m-ui-progress-head,
+			.a3m-ui-volume-head {
+				display: flex;
+				justify-content: space-between;
+				gap: 12px;
+				align-items: center;
+				color: var(--a3m-text-dim);
+				font-size: 0.92rem;
+			}
+
+			.a3m-ui-progress-bar,
+			.a3m-ui-volume-bar {
+				position: relative;
+				height: 10px;
+				border-radius: 999px;
+				background: rgba(255, 255, 255, 0.10);
+				overflow: hidden;
+			}
+
+			.a3m-ui-progress-fill,
+			.a3m-ui-volume-fill {
+				position: absolute;
+				left: 0;
+				top: 0;
+				bottom: 0;
+				background: linear-gradient(90deg, var(--a3m-accent), var(--a3m-accent-2));
+			}
+
+			.a3m-ui-progress-fill {
+				width: var(--a3m-progress-pct);
+			}
+
+			.a3m-ui-volume-fill {
+				width: var(--a3m-volume-pct);
+			}
+
+			.a3m-player[data-muted="1"] .a3m-ui-volume-fill {
+				opacity: 0.32;
+			}
+
+			.a3m-ui-volume-range {
+				width: 100%;
+				margin: 0;
+				position: relative;
+				z-index: 41;
+			}
+
+			.a3m-ui-state {
+				margin: 0;
+				padding: 12px 14px;
+				border: 1px solid var(--a3m-border);
+				border-radius: 14px;
+				background: rgba(0, 0, 0, 0.16);
+				color: var(--a3m-text-soft);
+				white-space: pre-wrap;
+				word-break: break-word;
+				font: 13px/1.45 monospace;
+			}
+
+			.a3m-ui-gesture {
+				position: fixed;
+				left: 0;
+				right: 0;
+				bottom: 0;
+				width: 100vw;
+				height: 50vh;
+				z-index: 20;
+				display: grid;
+				place-items: end center;
+				user-select: none;
+				touch-action: none;
+				background: transparent;
+			}
+
+			.a3m-ui-gesture-note {
+				margin-bottom: 18px;
+				padding: 10px 14px;
+				border: 1px solid var(--a3m-border);
+				border-radius: 12px;
+				background: rgba(0, 0, 0, 0.28);
+				text-align: center;
+				line-height: 1.5;
+				color: var(--a3m-text-soft);
+				pointer-events: none;
+				transition: transform 120ms ease, background 120ms ease;
+			}
+
+			.a3m-ui-gesture[data-gesture-active="1"] .a3m-ui-gesture-note {
+				transform: translateY(-2px);
+				background: rgba(0, 0, 0, 0.38);
+			}
+
+			@media (max-width: 760px) {
+				.a3m-player {
+					margin: 16px 12px 44px;
+					padding: 14px;
+				}
+			}
+		</style>
 	</head>
 	<body>
 			<div class="center">

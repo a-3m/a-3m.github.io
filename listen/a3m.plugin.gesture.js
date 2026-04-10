@@ -137,66 +137,17 @@
 			return dragMode;
 		}
 
-		function getLogsText(){
-			let rows = [];
-			let buf = [];
-			let i = 0;
-
-			if (window.__logs_local && typeof window.__logs_local.getText === 'function') {
-				return String(window.__logs_local.getText() || '');
-			}
-
-			if (window.__logs && typeof window.__logs.getBuffer === 'function') {
-				buf = window.__logs.getBuffer() || [];
-				for (i = 0; i < buf.length; i++) {
-					rows.push(String(buf[i] && buf[i].line || ''));
-				}
-				return rows.join('\n');
-			}
-
-			return '';
-		}
-
-		function downloadLogs(){
-			if (window.__logs_local && typeof window.__logs_local.download === 'function') {
-				window.__logs_local.download();
-				plog.log('logs download');
-				return true;
-			}
-
-			window.dispatchEvent(new CustomEvent('logs-local-download', {
-				detail: {}
-			}));
-			plog.log('logs download event');
-			return true;
-		}
-
-		function copyLogs(){
-			const text = getLogsText();
-
-			if (!text) {
-				plog.warn('logs clipboard empty');
-				return Promise.resolve(false);
-			}
-
-			if (!navigator.clipboard || !navigator.clipboard.writeText) {
-				plog.warn('logs clipboard unavailable');
-				return Promise.resolve(false);
-			}
-
-			return navigator.clipboard.writeText(text).then(function(){
-				plog.log('logs clipboard ok');
-				return true;
-			}).catch(function(e){
-				plog.warn('logs clipboard fail', e && e.message || e);
-				return false;
-			});
-		}
-
 		function runLogsGesture(dx, dy){
 			plog.log('two-finger down -> logs');
-			downloadLogs();
-			copyLogs();
+			if (window.__logs_local && typeof window.__logs_local.rotate === 'function') {
+				window.__logs_local.rotate();
+			} else {
+				window.dispatchEvent(new CustomEvent('logs-local-download', {
+					detail: {
+						reset: true
+					}
+				}));
+			}
 			bus.emit('evt:gesture-logs', {
 				dx: dx,
 				dy: dy
@@ -278,9 +229,9 @@
 			plog.log('swipe left -> next');
 			ctx.command('cmd:next', {
 				via: 'gesture',
-					dx: dx,
-					dy: dy
-				});
+				dx: dx,
+				dy: dy
+			});
 		}
 
 		function onPointerDown(e){
