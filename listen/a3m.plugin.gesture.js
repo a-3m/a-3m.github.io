@@ -15,6 +15,30 @@
 		return Math.min(b, Math.max(a, n));
 	}
 
+	function touchPoint(touches, count){
+		let x = 0;
+		let y = 0;
+		let n = 0;
+		let i = 0;
+
+		n = Math.min(
+			touches && touches.length || 0,
+			count || (touches ? touches.length : 0)
+		);
+
+		if (!n) return null;
+
+		for (i = 0; i < n; i++) {
+			x += touches[i].clientX;
+			y += touches[i].clientY;
+		}
+
+		return {
+			x: x / n,
+			y: y / n
+		};
+	}
+
 	function PluginGesture(opts){
 		this.options = opts || {};
 	}
@@ -39,6 +63,7 @@
 		const prevNodeOverscroll = node && node.style ? node.style.overscrollBehavior : '';
 		let active = false;
 		let pointerId = null;
+		let touchMode = '';
 		let startX = 0;
 		let startY = 0;
 		let lastX = 0;
@@ -69,6 +94,7 @@
 		function endSwipe(){
 			active = false;
 			pointerId = null;
+			touchMode = '';
 			startX = 0;
 			startY = 0;
 			lastX = 0;
@@ -84,9 +110,10 @@
 			else node.removeAttribute('data-gesture-active');
 		}
 
-		function start(x, y, id){
+		function start(x, y, id, mode){
 			active = true;
 			pointerId = id;
+			touchMode = mode || '';
 			startX = x;
 			startY = y;
 			lastX = x;
@@ -108,6 +135,72 @@
 			if (Math.abs(dy) > Math.abs(dx) * axisRatio) dragMode = 'y';
 			else if (Math.abs(dx) > Math.abs(dy) * axisRatio) dragMode = 'x';
 			return dragMode;
+		}
+
+		function getLogsText(){
+			let rows = [];
+			let buf = [];
+			let i = 0;
+
+			if (window.__logs_local && typeof window.__logs_local.getText === 'function') {
+				return String(window.__logs_local.getText() || '');
+			}
+
+			if (window.__logs && typeof window.__logs.getBuffer === 'function') {
+				buf = window.__logs.getBuffer() || [];
+				for (i = 0; i < buf.length; i++) {
+					rows.push(String(buf[i] && buf[i].line || ''));
+				}
+				return rows.join('\n');
+			}
+
+			return '';
+		}
+
+		function downloadLogs(){
+			if (window.__logs_local && typeof window.__logs_local.download === 'function') {
+				window.__logs_local.download();
+				plog.log('logs download');
+				return true;
+			}
+
+			window.dispatchEvent(new CustomEvent('logs-local-download', {
+				detail: {}
+			}));
+			plog.log('logs download event');
+			return true;
+		}
+
+		function copyLogs(){
+			const text = getLogsText();
+
+			if (!text) {
+				plog.warn('logs clipboard empty');
+				return Promise.resolve(false);
+			}
+
+			if (!navigator.clipboard || !navigator.clipboard.writeText) {
+				plog.warn('logs clipboard unavailable');
+				return Promise.resolve(false);
+			}
+
+			return navigator.clipboard.writeText(text).then(function(){
+				plog.log('logs clipboard ok');
+				return true;
+			}).catch(function(e){
+				plog.warn('logs clipboard fail', e && e.message || e);
+				return false;
+			});
+		}
+
+		function runLogsGesture(dx, dy){
+			plog.log('two-finger down -> logs');
+			downloadLogs();
+			copyLogs();
+			bus.emit('evt:gesture-logs', {
+				dx: dx,
+				dy: dy
+			});
 		}
 
 		function togglePlayback(dx, dy){
@@ -185,16 +278,17 @@
 			plog.log('swipe left -> next');
 			ctx.command('cmd:next', {
 				via: 'gesture',
-				dx: dx,
-				dy: dy
-			});
+					dx: dx,
+					dy: dy
+				});
 		}
 
 		function onPointerDown(e){
 			if (!node || !node.contains(e.target)) return;
+			if (e.pointerType === 'touch') return;
 			if (e.button != null && e.button !== 0) return;
 
-			start(e.clientX, e.clientY, e.pointerId);
+			start(e.clientX, e.clientY, e.pointerId, 'pointer');
 			if (node.setPointerCapture && e.pointerId != null) {
 				try { node.setPointerCapture(e.pointerId); } catch (er) {}
 			}
@@ -205,7 +299,7 @@
 			const dx = e.clientX - startX;
 			const dy = e.clientY - startY;
 
-			if (!active) return;
+			if (!active || touchMode !== 'pointer') return;
 			if (pointerId != null && e.pointerId != null && e.pointerId !== pointerId) return;
 
 			move(e.clientX, e.clientY);
@@ -220,7 +314,7 @@
 			const dx = lastX - startX;
 			const dy = lastY - startY;
 
-			if (!active) return;
+			if (!active || touchMode !== 'pointer') return;
 			if (pointerId != null && e.pointerId != null && e.pointerId !== pointerId) return;
 
 			setPress(false);
@@ -235,33 +329,73 @@
 		}
 
 		function onPointerCancel(){
+			if (touchMode !== 'pointer') return;
 			setPress(false);
 			endSwipe();
 		}
 
 		function onTouchStart(e){
-			const t = e.touches && e.touches[0];
+			let pt = null;
 
 			if (!node || !node.contains(e.target)) return;
-			if (!t) return;
 
-			start(t.clientX, t.clientY, null);
-			e.preventDefault();
+			if (!active) {
+				if (e.touches.length === 1) {
+					pt = touchPoint(e.touches, 1);
+					if (!pt) return;
+					start(pt.x, pt.y, null, 'single');
+					e.preventDefault();
+					return;
+				}
+
+				if (e.touches.length >= 2) {
+					pt = touchPoint(e.touches, 2);
+					if (!pt) return;
+					start(pt.x, pt.y, null, 'double');
+					e.preventDefault();
+					return;
+				}
+
+				return;
+			}
+
+			if (touchMode === 'single' && e.touches.length >= 2) {
+				pt = touchPoint(e.touches, 2);
+				if (!pt) return;
+				start(pt.x, pt.y, null, 'double');
+				e.preventDefault();
+			}
 		}
 
 		function onTouchMove(e){
-			const t = e.touches && e.touches[0];
-			const dx = t ? t.clientX - startX : 0;
-			const dy = t ? t.clientY - startY : 0;
+			let pt = null;
+			let dx = 0;
+			let dy = 0;
 
-			if (!active || !t) return;
+			if (!active) return;
 
-			move(t.clientX, t.clientY);
-			detectMode(dx, dy);
+			if (touchMode === 'single') {
+				pt = touchPoint(e.touches, 1);
+				if (!pt) return;
+				move(pt.x, pt.y);
 
-			if (dragMode === 'y') applyVertical(dx, dy);
+				dx = pt.x - startX;
+				dy = pt.y - startY;
 
-			e.preventDefault();
+				detectMode(dx, dy);
+
+				if (dragMode === 'y') applyVertical(dx, dy);
+
+				e.preventDefault();
+				return;
+			}
+
+			if (touchMode === 'double') {
+				pt = touchPoint(e.touches, 2);
+				if (!pt) return;
+				move(pt.x, pt.y);
+				e.preventDefault();
+			}
 		}
 
 		function onTouchEnd(e){
@@ -269,6 +403,26 @@
 			const dy = lastY - startY;
 
 			if (!active) return;
+
+			if (touchMode === 'double') {
+				if (e.touches && e.touches.length) {
+					e.preventDefault();
+					return;
+				}
+
+				setPress(false);
+
+				if (
+					dy > thresholdPx &&
+					Math.abs(dy) > Math.abs(dx) * axisRatio
+				) {
+					runLogsGesture(dx, dy);
+				}
+
+				endSwipe();
+				e.preventDefault();
+				return;
+			}
 
 			setPress(false);
 
@@ -310,27 +464,10 @@
 		if (docEl && docEl.style) docEl.style.overscrollBehaviorY = 'none';
 		if (body && body.style) body.style.overscrollBehaviorY = 'none';
 
-		if (window.PointerEvent) {
-			node.addEventListener('pointerdown', onPointerDown);
-			node.addEventListener('pointermove', onPointerMove);
-			node.addEventListener('pointerup', onPointerEnd);
-			node.addEventListener('pointercancel', onPointerCancel);
-
-			return function(){
-				let i = 0;
-
-				node.removeEventListener('pointerdown', onPointerDown);
-				node.removeEventListener('pointermove', onPointerMove);
-				node.removeEventListener('pointerup', onPointerEnd);
-				node.removeEventListener('pointercancel', onPointerCancel);
-
-				if (node && node.style) node.style.overscrollBehavior = prevNodeOverscroll;
-				if (docEl && docEl.style) docEl.style.overscrollBehaviorY = prevDocOverscrollY;
-				if (body && body.style) body.style.overscrollBehaviorY = prevBodyOverscrollY;
-
-				for (i = 0; i < off.length; i++) off[i]();
-			};
-		}
+		node.addEventListener('pointerdown', onPointerDown);
+		node.addEventListener('pointermove', onPointerMove);
+		node.addEventListener('pointerup', onPointerEnd);
+		node.addEventListener('pointercancel', onPointerCancel);
 
 		node.addEventListener('touchstart', onTouchStart, { passive: false });
 		node.addEventListener('touchmove', onTouchMove, { passive: false });
@@ -339,6 +476,11 @@
 
 		return function(){
 			let i = 0;
+
+			node.removeEventListener('pointerdown', onPointerDown);
+			node.removeEventListener('pointermove', onPointerMove);
+			node.removeEventListener('pointerup', onPointerEnd);
+			node.removeEventListener('pointercancel', onPointerCancel);
 
 			node.removeEventListener('touchstart', onTouchStart);
 			node.removeEventListener('touchmove', onTouchMove);

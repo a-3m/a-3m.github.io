@@ -33,7 +33,14 @@
 				data-output-mode="auto"
 				data-autoplay="0"
 			></div>
-			<script src="/libs/logs.js"></script>
+			<script>
+			window.__logs_cfg = {
+				id: 'a3m-listen'
+			};
+			</script>
+			<script src="/libs/logs-core.js?a3m"></script>
+			<script src="/libs/logs-local.js?a3m"></script>
+			<script src="/libs/logs-ws.js?a3m"></script>
 			<script src="a3m.bus.js?a3m"></script>
 			<script src="a3m.player.js?a3m"></script>
 			<script src="a3m.plugin.output.graph.js?a3m"></script>
