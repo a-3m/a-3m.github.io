@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+	<!--
+		# vim: set ts=4 sw=4 sts=4 noet :
+		#STYLE RULES
+		- Preserve existing style unless readability clearly improves.
+		- Keep code visually calm, compact, and easy to scan.
+		- Prefer direct, idiomatic JS + HTML + CSS + SVG
+	-->
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Listen Another Music [A3M] AAAM</title>
+		<link rel="stylesheet" href="a3m.0.css?a3m1">
+	</head>
+	<body>
+			<div class="center">
+			<h1>Listen Another Music</h1>
+			<div class=slogan>
+				No format, just feeling
+			</div>
+			<div>
+				<a href="https://another-art-another-music.pages.dev/">A3M</a> |
+				<a href="https://www.youtube.com/@another-art-another-music">YT page</a> |
+				<a href="">About</a>
+			</div>
+			</div>
+			<!--[a3m-player]-->
+			<div
+				id="a3m-player"
+				class="a3m-player a3m-play"
+				data-src="test://sin?freq=rnd"
+				data-output-mode="auto"
+				data-autoplay="0"
+			></div>
+			<script src="/libs/logs.js"></script>
+			<script src="a3m.bus.js?a3m"></script>
+			<script src="a3m.player.js?a3m"></script>
+			<script src="a3m.plugin.output.graph.js?a3m"></script>
+			<script src="a3m.plugin.autonext.js?a3m1"></script>
+			<script src="a3m.plugin.gesture.js?a3m1"></script>
+			<script src="a3m.plugin.mediasession.js?a3m"></script>
+			<script src="a3m.plugin.covergen.js?a3m1"></script>
+			<script src="a3m.plugin.coverbg.js?a3m4"></script>
+			<script src="a3m.boot.example.js?a3m"></script>
+			<!--[/a3m-player]-->
+	</body>
+</html>
