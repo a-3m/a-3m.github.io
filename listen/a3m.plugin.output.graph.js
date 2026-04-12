@@ -689,6 +689,8 @@
 		let audioCtx = null;
 		let finalGain = null;
 		let merger = null;
+		let nativeEl = null;
+		let graphEl = null;
 		let mediaEl = null;
 		let mediaNode = null;
 		let mediaSplitter = null;
@@ -700,7 +702,7 @@
 		let currentTrack = null;
 		let currentQuery = {};
 		let requestedMode = outputMode(this.options.outputMode || 'auto');
-		let resolvedMode = 'null';
+		let resolvedMode = 'native';
 		let currentFreq = 440;
 		let currentFreqIndex = 3;
 		let mediaReloading = false;
@@ -728,9 +730,22 @@
 			});
 		}
 
-		function applyMasterGain(){
-			if (!finalGain) return;
-			finalGain.gain.value = currentMuted ? 0 : currentVolume;
+		function elementActive(el){
+			return !!(el && el === mediaEl);
+		}
+
+		function applyElementVolume(){
+			if (nativeEl) {
+				nativeEl.volume = currentVolume;
+				nativeEl.muted = currentMuted;
+			}
+
+			if (graphEl) {
+				graphEl.volume = 1;
+				graphEl.muted = false;
+			}
+
+			if (finalGain) finalGain.gain.value = currentMuted ? 0 : currentVolume;
 		}
 
 		function modeChannels(mode){
@@ -765,8 +780,104 @@
 			return cleanText(meta.sourceKind).toLowerCase() === 'playlist';
 		}
 
+		function createMediaElement(){
+			const el = document.createElement('audio');
+
+			el.preload = 'none';
+			el.loop = currentLoop;
+			el.style.position = 'absolute';
+			el.style.left = '-9999px';
+			el.style.top = '-9999px';
+			el.style.width = '1px';
+			el.style.height = '1px';
+			el.style.opacity = '0';
+			el.style.pointerEvents = 'none';
+			root.appendChild(el);
+
+			el.addEventListener('loadedmetadata', function(){
+				if (!elementActive(el)) return;
+
+				mediaReloading = false;
+				emit('evt:ready', {
+					duration: isFinite(el.duration) ? el.duration : 0
+				});
+			});
+
+			el.addEventListener('timeupdate', function(){
+				if (!elementActive(el)) return;
+
+				emit('evt:time', {
+					position: isFinite(el.currentTime) ? el.currentTime : 0,
+					duration: isFinite(el.duration) ? el.duration : 0
+				});
+			});
+
+			el.addEventListener('play', function(){
+				if (!elementActive(el)) return;
+
+				mediaReloading = false;
+
+				if (currentKind === 'test-shadow') startTestEngine();
+
+				emit('evt:play', {});
+			});
+
+			el.addEventListener('pause', function(){
+				if (!elementActive(el)) return;
+
+				stopTestEngine();
+
+				if (mediaReloading) return;
+
+				emit('evt:pause', {});
+			});
+
+			el.addEventListener('ended', function(){
+				if (!elementActive(el)) return;
+
+				stopTestEngine();
+				emit('evt:ended', {
+					position: isFinite(el.currentTime) ? el.currentTime : 0,
+					duration: isFinite(el.duration) ? el.duration : 0
+				});
+			});
+
+			el.addEventListener('error', function(){
+				let msg = 'Audio media error';
+
+				if (!elementActive(el)) return;
+
+				if (el.error && el.error.message) msg = el.error.message;
+				else if (el.error && isFinite(el.error.code)) msg = 'Audio media error #' + el.error.code;
+
+				stopTestEngine();
+				mediaReloading = false;
+				emit('evt:error', {
+					message: cleanText(msg)
+				});
+			});
+
+			return el;
+		}
+
+		function ensureNativeElement(){
+			if (!nativeEl) nativeEl = createMediaElement();
+			mediaEl = nativeEl;
+			applyElementVolume();
+			return nativeEl;
+		}
+
+		function ensureGraphElement(){
+			if (!graphEl) graphEl = createMediaElement();
+			mediaEl = graphEl;
+			applyElementVolume();
+			return graphEl;
+		}
+
 		function ensureAudioContext(){
 			let i = 0;
+
+			ensureGraphElement();
 
 			if (audioCtx) return true;
 			if (typeof AudioContext !== 'function' && typeof webkitAudioContext !== 'function') {
@@ -787,10 +898,13 @@
 				testGains[i].connect(merger, 0, i);
 			}
 
-			merger.connect(finalGain);
-			applyMasterGain();
+			mediaNode = audioCtx.createMediaElementSource(graphEl);
+			mediaSplitter = audioCtx.createChannelSplitter(4);
+			mediaNode.connect(mediaSplitter);
+			applyMediaRouting(currentMediaChannels);
 
-			ensureMediaHelper();
+			merger.connect(finalGain);
+			applyElementVolume();
 			applyOutputMode(requestedMode);
 
 			return true;
@@ -831,82 +945,8 @@
 			if (channels >= 4) connectMediaOutput(3, 3);
 		}
 
-		function kindUsesMediaAudio(){
-			return currentKind === 'media' || currentKind === 'a3ms';
-		}
-
-		function ensureMediaHelper(){
-			if (mediaEl) return;
-
-			mediaEl = document.createElement('audio');
-			mediaEl.preload = 'none';
-			mediaEl.crossOrigin = 'anonymous';
-			mediaEl.loop = currentLoop;
-			mediaEl.style.position = 'absolute';
-			mediaEl.style.left = '-9999px';
-			mediaEl.style.top = '-9999px';
-			mediaEl.style.width = '1px';
-			mediaEl.style.height = '1px';
-			mediaEl.style.opacity = '0';
-			mediaEl.style.pointerEvents = 'none';
-			root.appendChild(mediaEl);
-
-			mediaNode = audioCtx.createMediaElementSource(mediaEl);
-			mediaSplitter = audioCtx.createChannelSplitter(4);
-
-			mediaNode.connect(mediaSplitter);
-			applyMediaRouting(currentMediaChannels);
-
-			mediaEl.addEventListener('loadedmetadata', function(){
-				mediaReloading = false;
-				emit('evt:ready', {
-					duration: isFinite(mediaEl.duration) ? mediaEl.duration : 0
-				});
-			});
-
-			mediaEl.addEventListener('timeupdate', function(){
-				emit('evt:time', {
-					position: isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0,
-					duration: isFinite(mediaEl.duration) ? mediaEl.duration : 0
-				});
-			});
-
-			mediaEl.addEventListener('play', function(){
-				mediaReloading = false;
-
-				if (currentKind === 'test-shadow') startTestEngine();
-
-				emit('evt:play', {});
-			});
-
-			mediaEl.addEventListener('pause', function(){
-				stopTestEngine();
-
-				if (mediaReloading) return;
-
-				emit('evt:pause', {});
-			});
-
-			mediaEl.addEventListener('ended', function(){
-				stopTestEngine();
-				emit('evt:ended', {
-					position: isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0,
-					duration: isFinite(mediaEl.duration) ? mediaEl.duration : 0
-				});
-			});
-
-			mediaEl.addEventListener('error', function(){
-				let msg = 'Audio media error';
-
-				if (mediaEl.error && mediaEl.error.message) msg = mediaEl.error.message;
-				else if (mediaEl.error && isFinite(mediaEl.error.code)) msg = 'Audio media error #' + mediaEl.error.code;
-
-				stopTestEngine();
-				mediaReloading = false;
-				emit('evt:error', {
-					message: cleanText(msg)
-				});
-			});
+		function kindUsesGraphMedia(){
+			return currentKind === 'a3ms';
 		}
 
 		function resumeContext(){
@@ -991,7 +1031,7 @@
 				meta.outputMode = requestedMode;
 				meta.outputModeResolved = resolvedMode;
 				meta.channels = currentA3msInfo.cc;
-				meta.helper = 'A3MS -> WAV blob + HTMLAudioElement';
+				meta.helper = 'A3MS -> WAV blob + WebAudio graph';
 				meta.freq = '';
 				meta.loop = currentLoop ? 1 : 0;
 				meta.sourceKind = 'a3ms';
@@ -1047,9 +1087,9 @@
 			meta.album = cleanText(currentTrack && currentTrack.album || '');
 			meta.cover = cleanText(currentTrack && currentTrack.cover || '');
 			meta.outputMode = requestedMode;
-			meta.outputModeResolved = resolvedMode;
-			meta.channels = modeChannels(resolvedMode);
-			meta.helper = 'HTMLAudioElement';
+			meta.outputModeResolved = 'native';
+			meta.channels = 2;
+			meta.helper = 'HTMLAudioElement native';
 			meta.freq = '';
 			meta.loop = currentLoop ? 1 : 0;
 			meta.sourceKind = 'single';
@@ -1111,20 +1151,25 @@
 		}
 
 		function applyOutputMode(mode){
-			if (!ensureAudioContext()) return;
+			if (!audioCtx) {
+				requestedMode = outputMode(mode || requestedMode);
+				resolvedMode = 'native';
+				return;
+			}
 
 			requestedMode = outputMode(mode || requestedMode);
 			resolvedMode = resolveOutputMode(requestedMode);
 
 			connectDestination(resolvedMode !== 'null');
-			setGainValues(mediaGains, kindUsesMediaAudio() ? activeGains(resolvedMode) : [ 0, 0, 0, 0 ]);
+			setGainValues(mediaGains, kindUsesGraphMedia() ? activeGains(resolvedMode) : [ 0, 0, 0, 0 ]);
 			setGainValues(testGains, currentKind === 'test-shadow' ? activeGains(resolvedMode) : [ 0, 0, 0, 0 ]);
-			applyMasterGain();
+			applyElementVolume();
 		}
 
 		function applyLoop(loop){
 			currentLoop = !!loop;
-			if (mediaEl) mediaEl.loop = currentLoop;
+			if (nativeEl) nativeEl.loop = currentLoop;
+			if (graphEl) graphEl.loop = currentLoop;
 		}
 
 		function nearestFreqIndex(freq){
@@ -1164,28 +1209,49 @@
 		}
 
 		function playMedia(){
-			resumeContext().then(function(ok){
-				if (!ok || !mediaEl) return;
-				mediaEl.play().catch(function(e){
-					stopTestEngine();
-					mediaReloading = false;
-					emit('evt:error', {
-						message: cleanText(e && e.message || 'Media play failed')
+			const el = mediaEl;
+
+			if (!el) return;
+
+			if (el === graphEl && audioCtx) {
+				resumeContext().then(function(ok){
+					if (!ok || !elementActive(el)) return;
+					el.play().catch(function(e){
+						stopTestEngine();
+						mediaReloading = false;
+						emit('evt:error', {
+							message: cleanText(e && e.message || 'Media play failed')
+						});
 					});
+				});
+				return;
+			}
+
+			el.play().catch(function(e){
+				mediaReloading = false;
+				emit('evt:error', {
+					message: cleanText(e && e.message || 'Media play failed')
 				});
 			});
 		}
 
-		function pauseMedia(reason){
-			if (!mediaEl) return;
+		function pauseElement(el, reason){
+			if (!el) return;
 
+			if (!el.paused) el.pause();
+
+			if (reason === 'stop' && el === mediaEl) {
+				try { el.currentTime = 0; } catch (e) {}
+			}
+		}
+
+		function pauseMedia(reason){
 			stopTestEngine();
 			mediaReloading = reason === 'reload';
 
-			if (!mediaEl.paused) mediaEl.pause();
+			pauseElement(mediaEl, reason);
 
-			if (reason === 'stop') {
-				try { mediaEl.currentTime = 0; } catch (e) {}
+			if (reason === 'stop' && mediaEl) {
 				emit('evt:stop', {
 					position: 0
 				});
@@ -1196,20 +1262,27 @@
 			}
 		}
 
+		function pauseInactiveElements(active){
+			if (nativeEl && nativeEl !== active) pauseElement(nativeEl, 'reload');
+			if (graphEl && graphEl !== active) pauseElement(graphEl, 'reload');
+		}
+
 		function loadBlobSource(blob, source, detail, kind, mediaChannels){
 			const autoplay = !!(detail && detail.autoplay);
 
+			ensureGraphElement();
 			if (!ensureAudioContext()) return;
 
 			revokeGeneratedBlob();
 			generatedBlobUrl = URL.createObjectURL(blob);
+
+			pauseInactiveElements(graphEl);
 
 			currentSource = source;
 			currentKind = kind || 'test-shadow';
 			currentTrack = detail && detail.track ? detail.track : null;
 			currentMediaChannels = Math.max(1, Math.min(4, parseInt(mediaChannels, 10) || 2));
 			applyMediaRouting(currentMediaChannels);
-
 			applyOutputMode(requestedMode);
 
 			emit('evt:load', {
@@ -1219,9 +1292,9 @@
 			emitMeta();
 			emitVolume('load');
 
-			mediaEl.loop = currentLoop;
-			mediaEl.src = generatedBlobUrl;
-			mediaEl.load();
+			graphEl.loop = currentLoop;
+			graphEl.src = generatedBlobUrl;
+			graphEl.load();
 
 			if (autoplay) playMedia();
 			else emit('evt:pause', {});
@@ -1230,8 +1303,6 @@
 		function loadTest(source, detail){
 			const parsed = parseSource(source);
 			let blob = null;
-
-			pauseMedia('reload');
 
 			currentA3msInfo = null;
 			currentQuery = parsed ? parsed.query : {};
@@ -1246,8 +1317,6 @@
 			const rendered = renderA3ms(parsed);
 			const blob = encodeWaveBlob(rendered);
 			const meta = mergeTrackIntoA3msMeta(parsed.meta || {}, detail && detail.track, source);
-
-			pauseMedia('reload');
 
 			currentA3msInfo = {
 				cc: parsed.cc,
@@ -1279,10 +1348,9 @@
 		function loadMedia(source, detail){
 			const autoplay = !!(detail && detail.autoplay);
 
-			if (!ensureAudioContext()) return;
-
+			ensureNativeElement();
+			pauseInactiveElements(nativeEl);
 			revokeGeneratedBlob();
-			pauseMedia('reload');
 
 			currentSource = source;
 			currentKind = 'media';
@@ -1296,9 +1364,8 @@
 				cover: ''
 			};
 			currentMediaChannels = 2;
-			applyMediaRouting(currentMediaChannels);
-
-			applyOutputMode(requestedMode);
+			resolvedMode = 'native';
+			applyElementVolume();
 
 			emit('evt:load', {
 				source: currentSource,
@@ -1307,9 +1374,10 @@
 			emitMeta();
 			emitVolume('load');
 
-			mediaEl.loop = currentLoop;
-			mediaEl.src = source;
-			mediaEl.load();
+			nativeEl.loop = currentLoop;
+			nativeEl.removeAttribute('crossorigin');
+			nativeEl.src = source;
+			nativeEl.load();
 
 			if (autoplay) playMedia();
 			else emit('evt:pause', {});
@@ -1366,7 +1434,7 @@
 		}
 
 		listen('cmd:init', function(){
-			if (!ensureAudioContext()) return;
+			ensureNativeElement();
 			emitMeta();
 			emitVolume('init');
 		});
@@ -1427,7 +1495,7 @@
 				currentMuted = true;
 			}
 
-			applyMasterGain();
+			applyElementVolume();
 			emitVolume('set-volume');
 		});
 
@@ -1447,7 +1515,7 @@
 				lastAudibleVolume = currentVolume;
 			}
 
-			applyMasterGain();
+			applyElementVolume();
 			emitVolume('set-muted');
 		});
 
@@ -1478,13 +1546,22 @@
 
 			revokeGeneratedBlob();
 
-			if (mediaEl) {
-				try { mediaEl.pause(); } catch (e) {}
-				mediaEl.removeAttribute('src');
-				try { mediaEl.srcObject = null; } catch (e) {}
-				mediaEl.load();
+			if (nativeEl) {
+				try { nativeEl.pause(); } catch (e) {}
+				nativeEl.removeAttribute('src');
+				try { nativeEl.srcObject = null; } catch (e) {}
+				nativeEl.load();
 
-				if (mediaEl.parentNode) mediaEl.parentNode.removeChild(mediaEl);
+				if (nativeEl.parentNode) nativeEl.parentNode.removeChild(nativeEl);
+			}
+
+			if (graphEl) {
+				try { graphEl.pause(); } catch (e) {}
+				graphEl.removeAttribute('src');
+				try { graphEl.srcObject = null; } catch (e) {}
+				graphEl.load();
+
+				if (graphEl.parentNode) graphEl.parentNode.removeChild(graphEl);
 			}
 
 			try { finalGain && finalGain.disconnect(); } catch (e) {}
