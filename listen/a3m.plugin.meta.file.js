@@ -169,12 +169,12 @@
 	}
 
 	function fetchMetaText(metaSrc){
-		return fetchText(metaSrc).catch(function(e){
-			if (!githubReleaseAssetInfo(metaSrc)) throw e;
-
-			debug('direct failed, try github release body', metaSrc, e && e.message || e);
+		if (githubReleaseAssetInfo(metaSrc)) {
+			debug('meta via github api body', metaSrc);
 			return fetchGithubReleaseBodyText(metaSrc);
-		});
+		}
+
+		return fetchText(metaSrc);
 	}
 
 	function PluginMetaFile(opts){
