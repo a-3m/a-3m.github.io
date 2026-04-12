@@ -1,10 +1,16 @@
+/* file: a3m.player.js */
 /*
 # vim: set ts=4 sw=4 sts=4 noet :
 */
 
 ;(function(){
-	const A3M = window.A3M || (window.A3M = {});
-	const Bus = A3M.Bus;
+	const a3m = window.a3m || (window.a3m = {});
+	const { log, err } = a3m.logp('player');
+	const Bus = a3m.Bus;
+
+	if (typeof Bus !== 'function') {
+		throw new Error('a3m.Bus missing');
+	}
 
 	function cleanText(s){
 		return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
@@ -44,43 +50,70 @@
 			currentTrack: copyTrack(state.currentTrack),
 			position: isFinite(state.position) ? state.position : 0,
 			duration: isFinite(state.duration) ? state.duration : 0,
+			volume: isFinite(state.volume) ? state.volume : 1,
+			muted: !!state.muted,
 			error: cleanText(state.error || ''),
 			meta: copyMeta(state.meta)
 		};
 	}
 
-	function createPlog(prefix){
-		prefix = cleanText(prefix) || '[a3m]';
+	function logNodeName(node){
+		let name = '';
 
-		return {
-			prefix: prefix,
-			log: function(){
-				const args = [ prefix ].concat([].slice.call(arguments));
-				console.log.apply(console, args);
-			},
-			warn: function(){
-				const args = [ prefix ].concat([].slice.call(arguments));
-				console.warn.apply(console, args);
-			},
-			err: function(){
-				const args = [ prefix ].concat([].slice.call(arguments));
-				console.error.apply(console, args);
-			},
-			child: function(name){
-				name = cleanText(name);
-				return createPlog(name ? (prefix + ':' + name) : prefix);
-			}
-		};
+		if (!node || !node.nodeType) return '[node]';
+
+		name = cleanText(node.tagName || node.nodeName || 'node').toLowerCase();
+
+		if (node.id) name += '#' + node.id;
+		if (node.className && typeof node.className === 'string') {
+			name += '.' + cleanText(node.className).replace(/\s+/g, '.');
+		}
+
+		return '[' + name + ']';
 	}
 
-	function plogPrefix(root, opts){
-		const id = cleanText(root && root.id || '');
-		const prefix = cleanText(opts && opts.logPrefix || '');
+	function logValue(v, depth, seen){
+		const out = {};
+		let k = '';
 
-		if (prefix) return prefix;
-		if (id) return '[a3m#' + id + ']';
+		if (v == null) return v;
+		if (typeof v === 'string') {
+			if (/^data:image\//i.test(v)) return '[data:image]';
+			if (/^data:/i.test(v)) return '[data]';
+			if (v.length > 512) return v.slice(0, 512) + '...';
+			return v;
+		}
+		if (typeof v === 'number' || typeof v === 'boolean') return v;
+		if (typeof v === 'function') return '[function]';
 
-		return '[a3m]';
+		if (typeof Node === 'function' && v instanceof Node) return logNodeName(v);
+		if (typeof Blob === 'function' && v instanceof Blob) {
+			return '[blob ' + cleanText(v.type || '') + ' ' + v.size + ']';
+		}
+		if (typeof Event === 'function' && v instanceof Event) {
+			return '[event ' + cleanText(v.type || '') + ']';
+		}
+
+		if (!seen) seen = [];
+		if (seen.indexOf(v) >= 0) return '[circular]';
+		if (depth <= 0) return '[object]';
+
+		seen.push(v);
+
+		if (Array.isArray(v)) {
+			return v.map(function(x){
+				return logValue(x, depth - 1, seen);
+			});
+		}
+
+		for (k in v) {
+			if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+			out[k] = logValue(v[k], depth - 1, seen);
+		}
+
+		seen.pop();
+
+		return out;
 	}
 
 	function Player(root, opts){
@@ -94,6 +127,8 @@
 			currentTrack: null,
 			position: 0,
 			duration: 0,
+			volume: 1,
+			muted: false,
 			error: '',
 			meta: {}
 		};
@@ -101,7 +136,6 @@
 		this.detachers = [];
 		this.coreDetachers = [];
 		this.inited = false;
-		this.plog = createPlog(plogPrefix(root, opts));
 
 		this.bindCore();
 	}
@@ -113,8 +147,9 @@
 			root: self.root,
 			options: self.options,
 			bus: self.bus,
-			plog: self.plog,
 			player: self,
+			log: log,
+			err: err,
 			getState: function(){
 				return self.getState();
 			},
@@ -163,7 +198,7 @@
 		type = cleanText(type);
 		if (!type) return this;
 
-		this.plog.log(type, detail || {});
+		log(type, logValue(detail || {}, 4, []));
 		this.bus.emit(type, detail || {});
 
 		return this;
@@ -256,6 +291,13 @@
 			});
 		});
 
+		self.listenCore('evt:volume', function(detail){
+			self.setState({
+				volume: isFinite(detail && detail.volume) ? detail.volume : self.state.volume,
+				muted: !!(detail && detail.muted)
+			});
+		});
+
 		self.listenCore('evt:error', function(detail){
 			self.setState({
 				error: cleanText(detail && (detail.message || detail.error) || 'Error')
@@ -287,7 +329,7 @@
 			try {
 				this.detachers[i]();
 			} catch (e) {
-				this.plog.err('destroy failed', e);
+				err('destroy failed', e);
 			}
 		}
 
@@ -303,6 +345,5 @@
 		this.inited = false;
 	};
 
-	A3M.createPlog = A3M.createPlog || createPlog;
-	A3M.Player = Player;
+	a3m.Player = Player;
 })();

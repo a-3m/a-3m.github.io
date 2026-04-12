@@ -1,17 +1,17 @@
-// File: a3m.plugin.autonext.js
+/* file: a3m.plugin.autonext.js */
 /*
 # vim: set ts=4 sw=4 sts=4 noet :
 */
 
 ;(function(){
-	const A3M = window.A3M || (window.A3M = {});
+	const a3m = window.a3m || (window.a3m = {});
+	const { log } = a3m.logp('autonext');
 
 	function PluginAutoNext(opts){
 		this.options = opts || {};
 	}
 
 	PluginAutoNext.prototype.attach = function(ctx){
-		const plog = ctx.plog.child('autonext');
 		const bus = ctx.bus;
 		const off = [];
 		let endedTimer = 0;
@@ -27,15 +27,13 @@
 
 		listen('evt:ended', function(detail){
 			clearEndedTimer();
-			plog.log('ended -> next');
+			log('ended -> next');
 			endedTimer = setTimeout(function(){
 				endedTimer = 0;
 				ctx.command('cmd:next', {
 					via: 'autonext',
-					ended: detail || {}
-				});
-				ctx.command('cmd:play', {
-					via: 'autonext'
+					ended: detail || {},
+					autoplay: true
 				});
 			}, 0);
 		});
@@ -53,5 +51,5 @@
 		};
 	};
 
-	A3M.PluginAutoNext = PluginAutoNext;
+	a3m.PluginAutoNext = PluginAutoNext;
 })();

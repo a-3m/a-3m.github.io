@@ -1,10 +1,11 @@
-// File: a3m.plugin.mediasession.js
+/* file: a3m.plugin.mediasession.js */
 /*
 # vim: set ts=4 sw=4 sts=4 noet :
 */
 
 ;(function(){
-	const A3M = window.A3M || (window.A3M = {});
+	const a3m = window.a3m || (window.a3m = {});
+	const { log, err } = a3m.logp('mediasession');
 
 	function cleanText(s){
 		return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
@@ -30,19 +31,35 @@
 		};
 	}
 
+	function mimeFromSrc(src){
+		src = cleanText(src).replace(/[?#].*$/, '');
+
+		if (/\.png$/i.test(src)) return 'image/png';
+		if (/\.jpe?g$/i.test(src)) return 'image/jpeg';
+		if (/\.webp$/i.test(src)) return 'image/webp';
+		if (/\.svg$/i.test(src)) return 'image/svg+xml';
+
+		return '';
+	}
+
 	function artworkList(track){
 		const out = [];
 		const seen = {};
 
 		function add(src, sizes){
-			src = cleanText(src);
-			if (!src || seen[src]) return;
-			seen[src] = 1;
-			out.push({
-				src: src,
-				sizes: sizes,
-				type: 'image/png'
-			});
+			const mime = mimeFromSrc(src);
+			const item = {
+				src: cleanText(src),
+				sizes: sizes
+			};
+
+			if (!item.src || seen[item.src]) return;
+
+			seen[item.src] = 1;
+
+			if (mime) item.type = mime;
+
+			out.push(item);
 		}
 
 		add(track.cover256, '256x256');
@@ -57,7 +74,6 @@
 	}
 
 	PluginMediaSession.prototype.attach = function(ctx){
-		const plog = ctx.plog.child('mediasession');
 		const bus = ctx.bus;
 		const off = [];
 		let lastMetaKey = '';
@@ -99,7 +115,7 @@
 
 			if (!track.title) {
 				navigator.mediaSession.metadata = null;
-				plog.log('metadata clear', reason || '');
+				log('metadata clear', reason || '');
 				return;
 			}
 
@@ -110,7 +126,7 @@
 					album: track.album,
 					artwork: artwork
 				});
-				plog.log('metadata set', {
+				log('metadata set', {
 					reason: reason || '',
 					title: track.title,
 					artist: track.artist,
@@ -118,7 +134,7 @@
 					cover: artwork.length ? 'yes' : 'no'
 				});
 			} catch (e) {
-				plog.err('metadata failed', e);
+				err('metadata failed', e);
 			}
 		}
 
@@ -133,7 +149,7 @@
 
 			try {
 				navigator.mediaSession.playbackState = key;
-				plog.log('playbackState', {
+				log('playbackState', {
 					reason: reason || '',
 					state: key
 				});
@@ -164,17 +180,19 @@
 
 				if (reason || sec !== lastPositionLogSec) {
 					lastPositionLogSec = sec;
-					plog.log('positionState', {
+					log("positionState: ...");
+/*					log('positionState', {
 						reason: reason || '',
 						position: pos,
 						duration: state.duration
 					});
+*/
 				}
 			} catch (e) {}
 		}
 
 		if (!('mediaSession' in navigator)) {
-			plog.log('not available');
+			log('not available');
 			return function(){};
 		}
 
@@ -203,27 +221,27 @@
 		});
 
 		setHandler('play', function(){
-			plog.log('action play');
+			log('action play');
 			ctx.command('cmd:play', {});
 		});
 
 		setHandler('pause', function(){
-			plog.log('action pause');
+			log('action pause');
 			ctx.command('cmd:pause', {});
 		});
 
 		setHandler('stop', function(){
-			plog.log('action stop');
+			log('action stop');
 			ctx.command('cmd:stop', {});
 		});
 
 		setHandler('nexttrack', function(){
-			plog.log('action nexttrack');
+			log('action nexttrack');
 			ctx.command('cmd:next', {});
 		});
 
 		setHandler('previoustrack', function(){
-			plog.log('action previoustrack');
+			log('action previoustrack');
 			ctx.command('cmd:prev', {});
 		});
 
@@ -234,7 +252,7 @@
 
 			if (!isFinite(pos)) return;
 
-			plog.log('action seekto', pos);
+			log('action seekto', pos);
 			ctx.command('cmd:seek', {
 				position: pos
 			});
@@ -253,5 +271,5 @@
 		};
 	};
 
-	A3M.PluginMediaSession = PluginMediaSession;
+	a3m.PluginMediaSession = PluginMediaSession;
 })();

@@ -1,0 +1,34 @@
+/* file: a3m.player.icons.css */
+/*
+# vim: set ts=4 sw=4 sts=4 noet :
+*/
+
+.a3m-player {
+	/* Filled at runtime by a3m.icons.js */
+	--a3m-icon-play: none;
+	--a3m-icon-stop: none;
+	--a3m-icon-pause: none;
+	--a3m-icon-prev: none;
+	--a3m-icon-next: none;
+	--a3m-icon-shuffle: none;
+	--a3m-icon-repeat: none;
+	--a3m-icon-settings: none;
+	--a3m-icon-channel: none;
+	--a3m-icon-channel-2: none;
+	--a3m-icon-channel-4: none;
+	--a3m-icon-channel-0: none;
+	--a3m-icon-playlist: none;
+	--a3m-icon-share: none;
+	--a3m-icon-download: none;
+	--a3m-icon-fullscreen-in: none;
+	--a3m-icon-fullscreen-out: none;
+	--a3m-icon-viewmode: none;
+	--a3m-icon-close: none;
+	--a3m-icon-more: none;
+	--a3m-icon-vol-0: none;
+	--a3m-icon-vol-1: none;
+	--a3m-icon-vol-2: none;
+	--a3m-icon-vol-3: none;
+	--a3m-icon-vol-4: none;
+	--a3m-icon-mute: none;
+}

@@ -1,10 +1,11 @@
-// File: a3m.plugin.covergen.js
+/* file: a3m.plugin.covergen.js */
 /*
 # vim: set ts=4 sw=4 sts=4 noet :
 */
 
 ;(function(){
-	const A3M = window.A3M || (window.A3M = {});
+	const a3m = window.a3m || (window.a3m = {});
+	const { log } = a3m.logp('covergen');
 
 	function cleanText(s){
 		return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
@@ -15,12 +16,14 @@
 		const track = detail && detail.track || state && state.currentTrack || null;
 		const source = cleanText(detail && detail.source || state && state.currentSource || '');
 		const m = /^test:\/\/sin(?:\?(.*))?$/i.exec(source);
+		const a3ms = parseA3msInfo(state, detail, source);
 		let freq = cleanText(meta.freq || '');
 		let qs = '';
 		let parts = [];
 		let i = 0;
 		let kv = null;
 
+		if (a3ms) return a3ms;
 		if (!m) return null;
 		if (track && cleanText(track.cover)) return null;
 		if (cleanText(meta.cover)) return null;
@@ -44,6 +47,7 @@
 		}
 
 		return {
+			kind: 'test',
 			source: source,
 			freq: freq,
 			mode: cleanText(meta.outputModeResolved || meta.outputMode || 'auto'),
@@ -93,7 +97,101 @@
 		}
 	}
 
-	function drawCover(size, info){
+	function decodeText(s){
+		s = String(s == null ? '' : s);
+
+		try {
+			return decodeURIComponent(s);
+		} catch (e) {
+			return s;
+		}
+	}
+
+	function a3msTitleCase(s){
+		s = cleanText(s).toLowerCase();
+		if (!s) return '';
+		return s.charAt(0).toUpperCase() + s.slice(1);
+	}
+
+	function parseA3msInfo(state, detail, source){
+		const meta = detail && detail.meta || state && state.meta || {};
+		const track = detail && detail.track || state && state.currentTrack || null;
+		const raw = String(source || '');
+		const tokens = raw.replace(/^a3ms:\/\//i, '').split('+');
+		const labels = [];
+		let cc = parseInt(meta.channels, 10);
+		let td = cleanText(meta.trackDuration || '');
+		let cur = 0;
+		let tok = '';
+		let m = null;
+		let i = 0;
+		let label = '';
+
+		if (!/^a3ms:\/\//i.test(raw)) return null;
+		if (track && cleanText(track.cover)) return null;
+		if (cleanText(meta.cover)) return null;
+
+		if (!isFinite(cc) || cc < 1) cc = 2;
+		if (!td) td = '3';
+
+		for (i = 0; i < tokens.length; i++) {
+			tok = cleanText(tokens[i]);
+			if (!tok) continue;
+
+			if (/^(?:c|c\+|ch\+)$/.test(tok.toLowerCase())) {
+				cur++;
+				continue;
+			}
+
+			m = /^cc\s*=\s*(.+)$/i.exec(tok);
+			if (m) {
+				cc = Math.max(1, Math.min(4, parseInt(m[1], 10) || cc));
+				continue;
+			}
+
+			m = /^td\s*=\s*(.+)$/i.exec(tok);
+			if (m) {
+				td = cleanText(m[1]);
+				continue;
+			}
+
+			m = /^sin(?:\s*=\s*|\s+)(.+)$/i.exec(tok);
+			if (m) {
+				label = 'Sin ' + cleanText(m[1] === 'rnd' ? 'Rnd' : decodeText(m[1]));
+				if (labels.length < 4) labels.push(label);
+				continue;
+			}
+
+			m = /^noise(?:\s*=\s*|\s+)(.+)$/i.exec(tok);
+			if (m) {
+				label = 'Noise ' + a3msTitleCase(decodeText(m[1]));
+				if (labels.length < 4) labels.push(label);
+				continue;
+			}
+
+			if (/^(white|pink|brown)$/i.test(tok)) {
+				label = 'Noise ' + a3msTitleCase(tok);
+				if (labels.length < 4) labels.push(label);
+			}
+		}
+
+		return {
+			kind: 'a3ms',
+			source: raw,
+			mode: cleanText(meta.outputModeResolved || meta.outputMode || 'auto'),
+			title: cleanText(meta.title || track && track.title || 'A3MS Synth'),
+			artist: cleanText(meta.artist || track && track.artist || 'A3M Synth'),
+			album: cleanText(meta.album || track && track.album || 'A3MS'),
+			year: cleanText(meta.year || ''),
+			date: cleanText(meta.date || ''),
+			channels: cc,
+			duration: td,
+			sampleRate: cleanText(meta.sampleRate || '48000'),
+			labels: labels
+		};
+	}
+
+	function drawTestCover(size, info){
 		const cnv = document.createElement('canvas');
 		const g = cnv.getContext && cnv.getContext('2d');
 		const freqNum = parseFloat(info.freq) || 440;
@@ -171,6 +269,99 @@
 		}
 	}
 
+	function drawA3msCover(size, info){
+		const cnv = document.createElement('canvas');
+		const g = cnv.getContext && cnv.getContext('2d');
+		const labels = Array.isArray(info.labels) ? info.labels : [];
+		const count = Math.max(1, Math.min(4, parseInt(info.channels, 10) || 2));
+		const h1 = hue(220, count * 33);
+		const h2 = hue(440, count * 27);
+		const h3 = hue(660, count * 21);
+		let grad = null;
+		let i = 0;
+		let y = 0;
+		let bandH = 0;
+		let label = '';
+
+		if (!g) return '';
+
+		cnv.width = size;
+		cnv.height = size;
+
+		grad = g.createLinearGradient(0, 0, size, size);
+		grad.addColorStop(0, 'hsl(' + h1 + ',70%,12%)');
+		grad.addColorStop(1, 'hsl(' + h3 + ',80%,6%)');
+		g.fillStyle = grad;
+		g.fillRect(0, 0, size, size);
+
+		g.globalAlpha = 0.18;
+		g.fillStyle = 'hsl(' + h2 + ',95%,55%)';
+		g.beginPath();
+		g.arc(size * 0.82, size * 0.18, size * 0.14, 0, Math.PI * 2);
+		g.fill();
+
+		g.fillStyle = 'hsl(' + h1 + ',95%,46%)';
+		g.beginPath();
+		g.arc(size * 0.20, size * 0.78, size * 0.18, 0, Math.PI * 2);
+		g.fill();
+		g.globalAlpha = 1;
+
+		bandH = size * 0.42 / count;
+
+		for (i = 0; i < count; i++) {
+			y = size * 0.22 + (i * bandH);
+			g.fillStyle = 'hsla(' + ((h1 + i * 28) % 360) + ',95%,62%,0.18)';
+			g.fillRect(size * 0.12, y, size * 0.76, Math.max(10, bandH * 0.66));
+
+			g.strokeStyle = 'hsla(' + ((h2 + i * 24) % 360) + ',98%,70%,0.85)';
+			g.lineWidth = Math.max(1, size * 0.0035);
+			g.beginPath();
+			g.moveTo(size * 0.12, y + bandH * 0.33);
+
+			for (let x = 0; x <= 64; x++) {
+				const px = size * 0.12 + (size * 0.76 * x / 64);
+				const py = y + bandH * 0.33 + Math.sin((x / 64) * Math.PI * 2 * (i + 1)) * bandH * 0.18;
+				if (!x) g.moveTo(px, py);
+				else g.lineTo(px, py);
+			}
+
+			g.stroke();
+		}
+
+		g.fillStyle = '#fff';
+		g.textAlign = 'center';
+		g.textBaseline = 'middle';
+
+		fitFont(g, 'A3MS', Math.round(size * 0.11), size * 0.72, '600', 'Arial');
+		g.fillText('A3MS', size * 0.5, size * 0.12);
+
+		fitFont(g, info.title, Math.round(size * 0.060), size * 0.84, '500', 'Arial');
+		g.fillText(info.title, size * 0.5, size * 0.73);
+
+		g.fillStyle = 'rgba(255,255,255,0.78)';
+		label = count + 'ch · ' + info.duration + 's · ' + info.sampleRate;
+		fitFont(g, label, Math.round(size * 0.032), size * 0.76, '400', 'Arial');
+		g.fillText(label, size * 0.5, size * 0.82);
+
+		g.fillStyle = 'rgba(255,255,255,0.56)';
+		label = labels.slice(0, 2).join(' / ');
+		if (!label) label = info.album || 'A3MS';
+		fitFont(g, label, Math.round(size * 0.026), size * 0.82, '400', 'Arial');
+		g.fillText(label, size * 0.5, size * 0.89);
+
+		try {
+			return cnv.toDataURL('image/png');
+		} catch (e) {
+			return '';
+		}
+	}
+
+	function drawCover(size, info){
+		if (!info) return '';
+		if (info.kind === 'a3ms') return drawA3msCover(size, info);
+		return drawTestCover(size, info);
+	}
+
 	function coverSet(info){
 		return {
 			cover: drawCover(1024, info),
@@ -184,7 +375,6 @@
 	}
 
 	PluginCoverGen.prototype.attach = function(ctx){
-		const plog = ctx.plog.child('covergen');
 		const bus = ctx.bus;
 		const off = [];
 
@@ -216,8 +406,7 @@
 			meta.cover = set.cover;
 			meta.cover512 = set.cover512 || set.cover;
 			meta.cover256 = set.cover256 || set.cover512 || set.cover;
-			meta.freq = info.freq;
-			meta.coverGenerated = 'covergen:test://sin';
+			meta.coverGenerated = info.kind === 'a3ms' ? 'covergen:a3ms' : 'covergen:test://sin';
 
 			ctx.setState({
 				currentTrack: track,
@@ -230,7 +419,7 @@
 				meta: meta
 			});
 
-			plog.log('generated', info.source, info.freq + 'Hz');
+			log('generated', info.source, info.kind);
 		}
 
 		listen('evt:meta', apply);
@@ -242,5 +431,5 @@
 		};
 	};
 
-	A3M.PluginCoverGen = PluginCoverGen;
+	a3m.PluginCoverGen = PluginCoverGen;
 })();

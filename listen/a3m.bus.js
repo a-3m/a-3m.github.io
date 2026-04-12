@@ -1,9 +1,12 @@
+/* file: a3m.bus.js */
 /*
 # vim: set ts=4 sw=4 sts=4 noet :
 */
 
 ;(function(){
-	const A3M = window.A3M || (window.A3M = {});
+	const root = window;
+	const a3m = root.a3m || (root.a3m = {});
+	const { err } = a3m.logp('bus');
 
 	function cleanText(s){
 		return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
@@ -44,10 +47,10 @@
 			try {
 				list[i](detail, type);
 			} catch (e) {
-				console.error('[a3m] bus listener error', type, e);
+				err('listener error', type, e);
 			}
 		}
 	};
 
-	A3M.Bus = Bus;
+	a3m.Bus = Bus;
 })();

@@ -1,10 +1,11 @@
-// File: a3m.plugin.output.graph.js
+/* file: a3m.plugin.output.graph.js */
 /*
 # vim: set ts=4 sw=4 sts=4 noet :
 */
 
 ;(function(){
-	const A3M = window.A3M || (window.A3M = {});
+	const a3m = window.a3m || (window.a3m = {});
+	const { log } = a3m.logp('output.graph');
 
 	function cleanText(s){
 		return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
@@ -93,12 +94,589 @@
 		return new Blob([ buf ], { type: 'audio/wav' });
 	}
 
+	function parseRateValue(v, fallback){
+		let n = 0;
+
+		v = cleanText(v).toLowerCase();
+		if (!v) return fallback;
+
+		if (/k$/.test(v)) {
+			n = parseFloat(v.replace(/k$/, ''));
+			return isFinite(n) && n > 0 ? Math.round(n * 1000) : fallback;
+		}
+
+		n = parseFloat(v);
+		return isFinite(n) && n > 0 ? Math.round(n) : fallback;
+	}
+
+	function parseTimeValue(v, fallback){
+		let n = 0;
+
+		v = cleanText(v).toLowerCase();
+		if (!v) return fallback;
+
+		if (/ms$/.test(v)) {
+			n = parseFloat(v.replace(/ms$/, ''));
+			return isFinite(n) ? n : fallback;
+		}
+
+		if (/s$/.test(v)) {
+			n = parseFloat(v.replace(/s$/, ''));
+			return isFinite(n) ? (n * 1000) : fallback;
+		}
+
+		n = parseFloat(v);
+		return isFinite(n) ? n : fallback;
+	}
+
+	function parseFreqValue(v){
+		let n = 0;
+
+		v = cleanText(v).toLowerCase();
+		if (!v) return '440';
+		if (v === 'rnd' || v === 'random') return 'rnd';
+		if (/hz$/.test(v)) v = cleanText(v.replace(/hz$/i, ''));
+		n = parseFloat(v);
+		return isFinite(n) && n > 0 ? String(n) : '440';
+	}
+
+	function parseNoiseValue(v){
+		v = cleanText(v).toLowerCase();
+		if (!v) return 'white';
+		if (v === 'rnd' || v === 'random') return 'rnd';
+		if (/^(white|pink|brown)$/.test(v)) return v;
+		return 'white';
+	}
+
+	function decodeA3msMetaValue(v){
+		v = String(v == null ? '' : v);
+
+		try {
+			return decodeURIComponent(v);
+		} catch (e) {
+			return v;
+		}
+	}
+
+	function fitFont(ctx, text, want, maxWidth, weight, family){
+		let size = want;
+
+		while (size > 10) {
+			ctx.font = (weight || '400') + ' ' + size + 'px ' + (family || 'Arial');
+			if (ctx.measureText(text).width <= maxWidth) return;
+			size -= 2;
+		}
+	}
+
+	function a3msFmtFreq(v){
+		v = parseFloat(v);
+		if (!isFinite(v) || v <= 0) return '440';
+		if (Math.abs(v - Math.round(v)) < 0.001) return String(Math.round(v));
+		return String(v);
+	}
+
+	function a3msTitleCase(s){
+		s = cleanText(s).toLowerCase();
+		if (!s) return '';
+		return s.charAt(0).toUpperCase() + s.slice(1);
+	}
+
+	function makeA3msChannel(){
+		return {
+			gen: null,
+			env: null,
+			gain: 1,
+			sms: 0,
+			dms: null,
+			hasDuration: false
+		};
+	}
+
+	function chooseRndFreq(){
+		const list = [ 110, 165, 220, 330, 440, 550, 660, 880, 990 ];
+		return list[Math.floor(Math.random() * list.length)] || 440;
+	}
+
+	function chooseRndNoise(){
+		const list = [ 'white', 'pink', 'brown' ];
+		return list[Math.floor(Math.random() * list.length)] || 'white';
+	}
+
+	function a3msChannelLabel(ch){
+		if (!ch || !ch.gen) return '';
+
+		if (ch.gen.type === 'sin') {
+			return 'Sin ' + (ch.gen.freq === 'rnd' ? 'Rnd' : a3msFmtFreq(ch.gen.freq));
+		}
+
+		if (ch.gen.type === 'noise') {
+			return 'Noise ' + a3msTitleCase(ch.gen.noise === 'rnd' ? 'rnd' : ch.gen.noise);
+		}
+
+		return '';
+	}
+
+	function parseA3msArt(s){
+		const out = {};
+		const parts = String(s == null ? '' : s).split(':');
+		let i = 0;
+		let p = null;
+		let k = '';
+		let v = '';
+
+		for (i = 0; i < parts.length; i++) {
+			p = String(parts[i] == null ? '' : parts[i]).split('=');
+			k = cleanText(p.shift() || '').toLowerCase();
+			v = cleanText(decodeA3msMetaValue(p.join('=') || ''));
+
+			if (!k) continue;
+			if (k === 'color' && v.toLowerCase() === 'write') v = 'white';
+
+			out[k] = v;
+		}
+
+		return out;
+	}
+
+	function drawA3msArtCover(size, art, meta){
+		const cnv = document.createElement('canvas');
+		const g = cnv.getContext && cnv.getContext('2d');
+		const bg = cleanText(art && (art.bg || art.background) || '#102');
+		const color = cleanText(art && (art.color || art.fg) || 'white');
+		const text = cleanText(art && art.text || meta && meta.title || 'A3MS');
+		const sub = cleanText(art && art.sub || meta && meta.album || '');
+		let grad = null;
+
+		if (!g) return '';
+
+		cnv.width = size;
+		cnv.height = size;
+
+		grad = g.createLinearGradient(0, 0, size, size);
+		grad.addColorStop(0, bg);
+		grad.addColorStop(1, '#000');
+		g.fillStyle = grad;
+		g.fillRect(0, 0, size, size);
+
+		g.globalAlpha = 0.18;
+		g.fillStyle = color;
+		g.beginPath();
+		g.arc(size * 0.20, size * 0.18, size * 0.15, 0, Math.PI * 2);
+		g.fill();
+		g.beginPath();
+		g.arc(size * 0.82, size * 0.78, size * 0.19, 0, Math.PI * 2);
+		g.fill();
+		g.globalAlpha = 1;
+
+		g.fillStyle = color;
+		g.textAlign = 'center';
+		g.textBaseline = 'middle';
+
+		fitFont(g, text, Math.round(size * 0.14), size * 0.82, '600', 'Arial');
+		g.fillText(text, size * 0.5, size * 0.48);
+
+		if (sub) {
+			g.fillStyle = 'rgba(255,255,255,0.68)';
+			fitFont(g, sub, Math.round(size * 0.045), size * 0.72, '400', 'Arial');
+			g.fillText(sub, size * 0.5, size * 0.62);
+		}
+
+		try {
+			return cnv.toDataURL('image/png');
+		} catch (e) {
+			return '';
+		}
+	}
+
+	function a3msArtCoverSet(art, meta){
+		const cover = drawA3msArtCover(1024, art, meta);
+
+		if (!cover) return null;
+
+		return {
+			cover: cover,
+			cover512: drawA3msArtCover(512, art, meta) || cover,
+			cover256: drawA3msArtCover(256, art, meta) || cover
+		};
+	}
+
+	function deriveA3msMeta(config, source){
+		const out = {};
+		const labels = [];
+		const now = new Date();
+		let i = 0;
+		let used = 0;
+		let title = '';
+
+		config = config || {};
+		config.meta = config.meta || {};
+		config.channels = Array.isArray(config.channels) ? config.channels : [];
+
+		for (i = 0; i < config.cc; i++) {
+			if (!config.channels[i] || !config.channels[i].gen) continue;
+			used++;
+			if (labels.length < 2) labels.push(a3msChannelLabel(config.channels[i]));
+		}
+
+		title = labels.join(' / ');
+		if (!title) title = 'A3MS Synth';
+		if (used > labels.length) title += ' / ...';
+		if (used > 1) title += ' · ' + used + 'ch';
+
+		out.title = cleanText(config.meta.title || title);
+		out.artist = cleanText(config.meta.artist || 'A3M Synth');
+		out.album = cleanText(config.meta.album || 'A3MS');
+		out.year = cleanText(config.meta.year || String(now.getFullYear()));
+		out.date = cleanText(
+			config.meta.date ||
+			(now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0'))
+		);
+		out.tracknum = cleanText(config.meta.tracknum || config.meta.track || '');
+		out.tracks = cleanText(config.meta.tracks || '');
+		out.cover = cleanText(config.meta.cover || '');
+		out.sampleRate = String(config.sr || 48000);
+		out.trackDuration = String((config.tdms || 3000) / 1000);
+		out.channels = String(config.cc || 2);
+		out.helper = 'A3MS -> WAV blob + HTMLAudioElement';
+		out.sourceKind = 'a3ms';
+		out.a3ms = '1';
+		out.source = cleanText(source || '');
+
+		return out;
+	}
+
+	function parseA3msSource(source){
+		const raw = String(source || '').replace(/^a3ms:\/\//i, '');
+		const tokens = raw.split('+');
+		const out = {
+			sr: 48000,
+			cc: 2,
+			tdms: 3000,
+			meta: {},
+			art: null,
+			channels: [ makeA3msChannel(), makeA3msChannel(), makeA3msChannel(), makeA3msChannel() ]
+		};
+		let cur = 0;
+		let tok = '';
+		let m = null;
+		let ch = null;
+		let i = 0;
+		let parts = null;
+		let period = 0;
+		let amp = 0;
+		let key = '';
+		let set = null;
+
+		for (i = 0; i < tokens.length; i++) {
+			tok = cleanText(tokens[i]);
+			if (!tok) continue;
+
+			if (/^c$/i.test(tok)) {
+				cur = Math.min(3, cur + 1);
+				continue;
+			}
+
+			m = /^m:([a-z0-9_]+)\s*=\s*(.*)$/i.exec(tok);
+			if (m) {
+				key = cleanText(m[1]).toLowerCase();
+				if (key) out.meta[key] = cleanText(decodeA3msMetaValue(m[2]));
+				continue;
+			}
+
+			m = /^a:(.+)$/i.exec(tok);
+			if (m) {
+				out.art = parseA3msArt(m[1]);
+				continue;
+			}
+
+			m = /^cc\s*=\s*(.+)$/i.exec(tok);
+			if (m) {
+				out.cc = Math.max(1, Math.min(4, parseInt(m[1], 10) || 2));
+				continue;
+			}
+
+			m = /^sr\s*=\s*(.+)$/i.exec(tok);
+			if (m) {
+				out.sr = Math.max(8000, Math.min(192000, parseRateValue(m[1], out.sr)));
+				continue;
+			}
+
+			m = /^td\s*=\s*(.+)$/i.exec(tok);
+			if (m) {
+				out.tdms = parseTimeValue(m[1], out.tdms);
+				continue;
+			}
+
+			m = /^ch\s*=\s*(.+)$/i.exec(tok);
+			if (m) {
+				cur = Math.max(0, Math.min(3, parseInt(m[1], 10) || 0));
+				continue;
+			}
+
+			ch = out.channels[cur];
+
+			m = /^s\s*=\s*(.+)$/i.exec(tok);
+			if (m) {
+				ch.sms = parseTimeValue(m[1], ch.sms);
+				continue;
+			}
+
+			m = /^d\s*=\s*(.+)$/i.exec(tok);
+			if (m) {
+				ch.dms = parseTimeValue(m[1], out.tdms);
+				ch.hasDuration = true;
+				continue;
+			}
+
+			m = /^gain\s*=\s*(.+)$/i.exec(tok);
+			if (m) {
+				ch.gain = clamp(m[1], 0, 4);
+				continue;
+			}
+
+			m = /^(?:envsin|env)\s*=\s*(.+)$/i.exec(tok);
+			if (m) {
+				parts = String(m[1] || '').split(',');
+				period = Math.max(1, parseTimeValue(parts[0], 1000));
+				amp = clamp(parts[1], 0, 1);
+				ch.env = {
+					type: 'envsin',
+					periodMs: period,
+					amp: amp
+				};
+				continue;
+			}
+
+			m = /^sin(?:\s*=\s*|\s+)(.+)$/i.exec(tok);
+			if (m) {
+				ch.gen = {
+					type: 'sin',
+					freq: parseFreqValue(m[1])
+				};
+				continue;
+			}
+
+			m = /^noise(?:\s*=\s*|\s+)(.+)$/i.exec(tok);
+			if (m) {
+				ch.gen = {
+					type: 'noise',
+					noise: parseNoiseValue(m[1])
+				};
+				continue;
+			}
+
+			if (/^(white|pink|brown)$/i.test(tok)) {
+				ch.gen = {
+					type: 'noise',
+					noise: parseNoiseValue(tok)
+				};
+			}
+		}
+
+		out.tdms = Math.max(1, Math.min(30000, parseTimeValue(out.tdms, 3000) || 3000));
+
+		for (i = 0; i < out.channels.length; i++) {
+			ch = out.channels[i];
+			ch.sms = Math.max(0, Math.min(out.tdms, parseTimeValue(ch.sms, 0) || 0));
+			if (!ch.hasDuration) ch.dms = Math.max(0, out.tdms - ch.sms);
+			ch.dms = Math.max(0, Math.min(out.tdms - ch.sms, parseTimeValue(ch.dms, out.tdms - ch.sms) || 0));
+		}
+
+		out.meta = deriveA3msMeta(out, source);
+
+		if (out.art) {
+			set = a3msArtCoverSet(out.art, out.meta);
+			if (set && set.cover) {
+				out.meta.cover = set.cover;
+				out.meta.cover512 = set.cover512 || set.cover;
+				out.meta.cover256 = set.cover256 || set.cover512 || set.cover;
+				out.meta.coverGenerated = 'a3ms:inline-art';
+			}
+		}
+
+		return out;
+	}
+
+	function mergeTrackIntoA3msMeta(meta, track, source){
+		meta = meta || {};
+		track = track || {};
+
+		if (cleanText(track.src) && cleanText(track.src) !== cleanText(source)) return meta;
+
+		if (cleanText(track.title)) meta.title = cleanText(track.title);
+		if (cleanText(track.artist)) meta.artist = cleanText(track.artist);
+		if (cleanText(track.album)) meta.album = cleanText(track.album);
+		if (cleanText(track.cover)) meta.cover = cleanText(track.cover);
+
+		return meta;
+	}
+
+	function resolveA3msSinFreq(gen){
+		if (!gen) return 440;
+		if (gen.freq === 'rnd') return chooseRndFreq();
+		return Math.max(1, parseFloat(gen.freq) || 440);
+	}
+
+	function resolveA3msNoiseType(gen){
+		if (!gen) return 'white';
+		if (gen.noise === 'rnd') return chooseRndNoise();
+		return parseNoiseValue(gen.noise);
+	}
+
+	function envsinValue(env, i, sr){
+		const period = Math.max(1, Math.floor(sr * env.periodMs / 1000));
+		const amp = clamp(env.amp, 0, 1);
+		const wave = 0.5 + 0.5 * Math.sin((Math.PI * 2 * i) / period);
+
+		return (1 - amp) + (amp * wave);
+	}
+
+	function noiseSample(type, state){
+		const white = Math.random() * 2 - 1;
+		let pink = 0;
+
+		if (type === 'brown') {
+			state.brown += white * 0.02;
+			if (state.brown > 1) state.brown = 1;
+			if (state.brown < -1) state.brown = -1;
+			return state.brown;
+		}
+
+		if (type === 'pink') {
+			state.p0 = 0.99886 * state.p0 + white * 0.0555179;
+			state.p1 = 0.99332 * state.p1 + white * 0.0750759;
+			state.p2 = 0.96900 * state.p2 + white * 0.1538520;
+			state.p3 = 0.86650 * state.p3 + white * 0.3104856;
+			state.p4 = 0.55000 * state.p4 + white * 0.5329522;
+			state.p5 = -0.7616 * state.p5 - white * 0.0168980;
+			pink = state.p0 + state.p1 + state.p2 + state.p3 + state.p4 + state.p5 + state.p6 + white * 0.5362;
+			state.p6 = white * 0.115926;
+			return pink * 0.11;
+		}
+
+		return white;
+	}
+
+	function renderA3ms(config){
+		const frames = Math.max(1, Math.floor(config.sr * config.tdms / 1000));
+		const channels = [];
+		let ch = 0;
+		let state = null;
+		let gen = null;
+		let start = 0;
+		let len = 0;
+		let i = 0;
+		let sample = 0;
+		let freq = 0;
+		let step = 0;
+		let noiseType = '';
+		let noiseState = null;
+		let out = null;
+		let g = 1;
+
+		for (ch = 0; ch < config.cc; ch++) channels.push(new Float32Array(frames));
+
+		for (ch = 0; ch < config.cc; ch++) {
+			state = config.channels[ch];
+			if (!state || !state.gen) continue;
+
+			out = channels[ch];
+			start = Math.max(0, Math.floor(config.sr * state.sms / 1000));
+			len = Math.max(0, Math.floor(config.sr * state.dms / 1000));
+			if (start >= out.length || len <= 0) continue;
+			if (start + len > out.length) len = out.length - start;
+
+			gen = state.gen;
+
+			if (gen.type === 'sin') {
+				freq = resolveA3msSinFreq(gen);
+				step = (Math.PI * 2 * freq) / config.sr;
+
+				for (i = 0; i < len; i++) {
+					sample = Math.sin(i * step);
+					g = state.env ? envsinValue(state.env, i, config.sr) : 1;
+					out[start + i] = sample * g * state.gain;
+				}
+
+				continue;
+			}
+
+			if (gen.type === 'noise') {
+				noiseType = resolveA3msNoiseType(gen);
+				noiseState = {
+					brown: 0,
+					p0: 0,
+					p1: 0,
+					p2: 0,
+					p3: 0,
+					p4: 0,
+					p5: 0,
+					p6: 0
+				};
+
+				for (i = 0; i < len; i++) {
+					sample = noiseSample(noiseType, noiseState);
+					g = state.env ? envsinValue(state.env, i, config.sr) : 1;
+					out[start + i] = sample * g * state.gain;
+				}
+			}
+		}
+
+		return {
+			sampleRate: config.sr,
+			channelCount: config.cc,
+			frames: frames,
+			duration: config.tdms / 1000,
+			channels: channels
+		};
+	}
+
+	function encodeWaveBlob(rendered){
+		const channels = rendered && rendered.channels ? rendered.channels : [];
+		const count = channels.length || 1;
+		const frames = channels[0] ? channels[0].length : 0;
+		const bytesPerSample = 2;
+		const blockAlign = count * bytesPerSample;
+		const byteRate = rendered.sampleRate * blockAlign;
+		const dataSize = frames * blockAlign;
+		const buf = new ArrayBuffer(44 + dataSize);
+		const view = new DataView(buf);
+		let off = 44;
+		let i = 0;
+		let ch = 0;
+		let sample = 0;
+
+		writeAscii(view, 0, 'RIFF');
+		view.setUint32(4, 36 + dataSize, true);
+		writeAscii(view, 8, 'WAVE');
+		writeAscii(view, 12, 'fmt ');
+		view.setUint32(16, 16, true);
+		view.setUint16(20, 1, true);
+		view.setUint16(22, count, true);
+		view.setUint32(24, rendered.sampleRate, true);
+		view.setUint32(28, byteRate, true);
+		view.setUint16(32, blockAlign, true);
+		view.setUint16(34, bytesPerSample * 8, true);
+		writeAscii(view, 36, 'data');
+		view.setUint32(40, dataSize, true);
+
+		for (i = 0; i < frames; i++) {
+			for (ch = 0; ch < count; ch++) {
+				sample = channels[ch] && isFinite(channels[ch][i]) ? channels[ch][i] : 0;
+				sample = Math.max(-1, Math.min(1, sample));
+				view.setInt16(off, sample < 0 ? Math.round(sample * 32768) : Math.round(sample * 32767), true);
+				off += 2;
+			}
+		}
+
+		return new Blob([ buf ], { type: 'audio/wav' });
+	}
+
 	function PluginOutputGraph(opts){
 		this.options = opts || {};
 	}
 
 	PluginOutputGraph.prototype.attach = function(ctx){
-		const plog = ctx.plog.child('output.graph');
 		const bus = ctx.bus;
 		const off = [];
 		const root = ctx.root || document.body || document.documentElement;
@@ -126,9 +704,13 @@
 		let currentFreq = 440;
 		let currentFreqIndex = 3;
 		let mediaReloading = false;
-		let testBlobUrl = '';
+		let generatedBlobUrl = '';
 		let currentVolume = clamp(this.options.volume != null ? this.options.volume : 1, 0, 1);
 		let currentMuted = !!this.options.muted;
+		let currentLoop = !!this.options.loop;
+		let lastAudibleVolume = currentVolume > 0 ? currentVolume : 1;
+		let currentMediaChannels = 2;
+		let currentA3msInfo = null;
 
 		function listen(type, fn){
 			off.push(bus.on(type, fn));
@@ -138,8 +720,9 @@
 			bus.emit(type, detail || {});
 		}
 
-		function emitVolume(){
+		function emitVolume(reason){
 			emit('evt:volume', {
+				reason: cleanText(reason || ''),
 				volume: currentVolume,
 				muted: currentMuted
 			});
@@ -170,11 +753,16 @@
 			}
 		}
 
-		function revokeTestBlob(){
-			if (!testBlobUrl) return;
+		function revokeGeneratedBlob(){
+			if (!generatedBlobUrl) return;
 
-			try { URL.revokeObjectURL(testBlobUrl); } catch (e) {}
-			testBlobUrl = '';
+			try { URL.revokeObjectURL(generatedBlobUrl); } catch (e) {}
+			generatedBlobUrl = '';
+		}
+
+		function playlistOwnsTransport(){
+			const meta = ctx.getState().meta || {};
+			return cleanText(meta.sourceKind).toLowerCase() === 'playlist';
 		}
 
 		function ensureAudioContext(){
@@ -208,12 +796,52 @@
 			return true;
 		}
 
+		function connectMediaOutput(outIndex, gainIndex){
+			try {
+				mediaSplitter.connect(mediaGains[gainIndex], outIndex, 0);
+			} catch (e) {}
+		}
+
+		function applyMediaRouting(channels){
+			channels = Math.max(1, Math.min(4, parseInt(channels, 10) || 2));
+			currentMediaChannels = channels;
+			if (!mediaSplitter) return;
+
+			try { mediaSplitter.disconnect(); } catch (e) {}
+
+			if (channels <= 1) {
+				connectMediaOutput(0, 0);
+				connectMediaOutput(0, 1);
+				connectMediaOutput(0, 2);
+				connectMediaOutput(0, 3);
+				return;
+			}
+
+			if (channels === 2) {
+				connectMediaOutput(0, 0);
+				connectMediaOutput(1, 1);
+				connectMediaOutput(0, 2);
+				connectMediaOutput(1, 3);
+				return;
+			}
+
+			connectMediaOutput(0, 0);
+			connectMediaOutput(1, 1);
+			connectMediaOutput(2, 2);
+			if (channels >= 4) connectMediaOutput(3, 3);
+		}
+
+		function kindUsesMediaAudio(){
+			return currentKind === 'media' || currentKind === 'a3ms';
+		}
+
 		function ensureMediaHelper(){
 			if (mediaEl) return;
 
 			mediaEl = document.createElement('audio');
 			mediaEl.preload = 'none';
 			mediaEl.crossOrigin = 'anonymous';
+			mediaEl.loop = currentLoop;
 			mediaEl.style.position = 'absolute';
 			mediaEl.style.left = '-9999px';
 			mediaEl.style.top = '-9999px';
@@ -224,13 +852,10 @@
 			root.appendChild(mediaEl);
 
 			mediaNode = audioCtx.createMediaElementSource(mediaEl);
-			mediaSplitter = audioCtx.createChannelSplitter(2);
+			mediaSplitter = audioCtx.createChannelSplitter(4);
 
 			mediaNode.connect(mediaSplitter);
-			mediaSplitter.connect(mediaGains[0], 0, 0);
-			mediaSplitter.connect(mediaGains[2], 0, 0);
-			mediaSplitter.connect(mediaGains[1], 1, 0);
-			mediaSplitter.connect(mediaGains[3], 1, 0);
+			applyMediaRouting(currentMediaChannels);
 
 			mediaEl.addEventListener('loadedmetadata', function(){
 				mediaReloading = false;
@@ -323,48 +948,124 @@
 			testOsc = null;
 		}
 
+		function currentStateTrack(){
+			const state = ctx.getState();
+			const track = state && state.currentTrack ? state.currentTrack : null;
+
+			if (!track || cleanText(track.src) !== cleanText(currentSource)) return null;
+
+			return track;
+		}
+
+		function currentStateMeta(){
+			const state = ctx.getState();
+			const track = currentStateTrack();
+
+			if (!track) return {};
+
+			return state && state.meta ? state.meta : {};
+		}
+
 		function currentMeta(){
-			let track = currentTrack || {};
-			let title = track.title;
-			let artist = track.artist;
-			let album = track.album;
-			let cover = track.cover;
-			let helper = 'HTMLAudioElement';
+			const meta = {};
+			const savedTrack = currentStateTrack();
+			const savedMeta = currentStateMeta();
+			let track = null;
+
+			if (currentKind === 'a3ms' && currentA3msInfo && currentA3msInfo.meta) {
+				meta.title = cleanText(currentA3msInfo.meta.title || 'A3MS Synth');
+				meta.artist = cleanText(currentA3msInfo.meta.artist || 'A3M Synth');
+				meta.album = cleanText(currentA3msInfo.meta.album || 'A3MS');
+				meta.cover = cleanText(currentA3msInfo.meta.cover || '');
+				meta.cover512 = cleanText(currentA3msInfo.meta.cover512 || '');
+				meta.cover256 = cleanText(currentA3msInfo.meta.cover256 || '');
+				meta.year = cleanText(currentA3msInfo.meta.year || '');
+				meta.date = cleanText(currentA3msInfo.meta.date || '');
+				meta.tracknum = cleanText(currentA3msInfo.meta.tracknum || '');
+				meta.tracks = cleanText(currentA3msInfo.meta.tracks || '');
+
+				if (!meta.cover && savedTrack && cleanText(savedTrack.cover)) meta.cover = cleanText(savedTrack.cover);
+				if (!meta.cover512 && cleanText(savedMeta.cover512)) meta.cover512 = cleanText(savedMeta.cover512);
+				if (!meta.cover256 && cleanText(savedMeta.cover256)) meta.cover256 = cleanText(savedMeta.cover256);
+
+				meta.outputMode = requestedMode;
+				meta.outputModeResolved = resolvedMode;
+				meta.channels = currentA3msInfo.cc;
+				meta.helper = 'A3MS -> WAV blob + HTMLAudioElement';
+				meta.freq = '';
+				meta.loop = currentLoop ? 1 : 0;
+				meta.sourceKind = 'a3ms';
+				meta.sampleRate = String(currentA3msInfo.sr);
+				meta.trackDuration = String(currentA3msInfo.tdms / 1000);
+				meta.a3ms = 1;
+
+				track = {
+					src: currentSource,
+					title: meta.title,
+					artist: meta.artist,
+					album: meta.album,
+					cover: meta.cover
+				};
+
+				return {
+					source: currentSource,
+					track: track,
+					meta: meta
+				};
+			}
 
 			if (currentKind === 'test-shadow') {
-				title = title || ('Sine ' + currentFreq + ' Hz');
-				artist = artist || 'A3M Test';
-				album = album || 'test://sin';
-				cover = cover || '';
-				helper = 'Oscillator + HTMLAudioElement shadow';
-			} else if (currentKind === 'media') {
-				title = title || currentSource;
-				artist = artist || '';
-				album = album || '';
-				cover = cover || '';
-				helper = 'HTMLAudioElement';
+				meta.title = cleanText(currentTrack && currentTrack.title || ('Sine ' + currentFreq + ' Hz'));
+				meta.artist = cleanText(currentTrack && currentTrack.artist || 'A3M Test');
+				meta.album = cleanText(currentTrack && currentTrack.album || 'test://sin');
+				meta.cover = cleanText(currentTrack && currentTrack.cover || '');
+				meta.outputMode = requestedMode;
+				meta.outputModeResolved = resolvedMode;
+				meta.channels = modeChannels(resolvedMode);
+				meta.helper = 'Oscillator + HTMLAudioElement shadow';
+				meta.freq = String(currentFreq);
+				meta.loop = currentLoop ? 1 : 0;
+				meta.sourceKind = 'test';
+
+				track = {
+					src: currentSource,
+					title: meta.title,
+					artist: meta.artist,
+					album: meta.album,
+					cover: meta.cover
+				};
+
+				return {
+					source: currentSource,
+					track: track,
+					meta: meta
+				};
 			}
+
+			meta.title = cleanText(currentTrack && currentTrack.title || currentSource || '');
+			meta.artist = cleanText(currentTrack && currentTrack.artist || '');
+			meta.album = cleanText(currentTrack && currentTrack.album || '');
+			meta.cover = cleanText(currentTrack && currentTrack.cover || '');
+			meta.outputMode = requestedMode;
+			meta.outputModeResolved = resolvedMode;
+			meta.channels = modeChannels(resolvedMode);
+			meta.helper = 'HTMLAudioElement';
+			meta.freq = '';
+			meta.loop = currentLoop ? 1 : 0;
+			meta.sourceKind = 'single';
+
+			track = {
+				src: currentSource,
+				title: meta.title,
+				artist: meta.artist,
+				album: meta.album,
+				cover: meta.cover
+			};
 
 			return {
 				source: currentSource,
-				track: {
-					src: currentSource,
-					title: cleanText(title),
-					artist: cleanText(artist),
-					album: cleanText(album),
-					cover: cleanText(cover)
-				},
-				meta: {
-					title: cleanText(title),
-					artist: cleanText(artist),
-					album: cleanText(album),
-					cover: cleanText(cover),
-					outputMode: requestedMode,
-					outputModeResolved: resolvedMode,
-					channels: modeChannels(resolvedMode),
-					helper: helper,
-					freq: currentKind === 'test-shadow' ? String(currentFreq) : ''
-				}
+				track: track,
+				meta: meta
 			};
 		}
 
@@ -416,9 +1117,14 @@
 			resolvedMode = resolveOutputMode(requestedMode);
 
 			connectDestination(resolvedMode !== 'null');
-			setGainValues(mediaGains, currentKind === 'media' ? activeGains(resolvedMode) : [ 0, 0, 0, 0 ]);
+			setGainValues(mediaGains, kindUsesMediaAudio() ? activeGains(resolvedMode) : [ 0, 0, 0, 0 ]);
 			setGainValues(testGains, currentKind === 'test-shadow' ? activeGains(resolvedMode) : [ 0, 0, 0, 0 ]);
 			applyMasterGain();
+		}
+
+		function applyLoop(loop){
+			currentLoop = !!loop;
+			if (mediaEl) mediaEl.loop = currentLoop;
 		}
 
 		function nearestFreqIndex(freq){
@@ -490,17 +1196,19 @@
 			}
 		}
 
-		function loadBlobSource(blob, source, detail){
+		function loadBlobSource(blob, source, detail, kind, mediaChannels){
 			const autoplay = !!(detail && detail.autoplay);
 
 			if (!ensureAudioContext()) return;
 
-			revokeTestBlob();
-			testBlobUrl = URL.createObjectURL(blob);
+			revokeGeneratedBlob();
+			generatedBlobUrl = URL.createObjectURL(blob);
 
 			currentSource = source;
-			currentKind = 'test-shadow';
+			currentKind = kind || 'test-shadow';
 			currentTrack = detail && detail.track ? detail.track : null;
+			currentMediaChannels = Math.max(1, Math.min(4, parseInt(mediaChannels, 10) || 2));
+			applyMediaRouting(currentMediaChannels);
 
 			applyOutputMode(requestedMode);
 
@@ -509,9 +1217,10 @@
 				src: currentSource
 			});
 			emitMeta();
+			emitVolume('load');
 
-			mediaEl.loop = false;
-			mediaEl.src = testBlobUrl;
+			mediaEl.loop = currentLoop;
+			mediaEl.src = generatedBlobUrl;
 			mediaEl.load();
 
 			if (autoplay) playMedia();
@@ -524,11 +1233,47 @@
 
 			pauseMedia('reload');
 
+			currentA3msInfo = null;
 			currentQuery = parsed ? parsed.query : {};
 			pickFreq(currentQuery.freq || '440');
 			blob = silentWaveBlob(testSeconds, testSampleRate);
 
-			loadBlobSource(blob, source, detail);
+			loadBlobSource(blob, source, detail, 'test-shadow', 2);
+		}
+
+		function loadA3ms(source, detail){
+			const parsed = parseA3msSource(source);
+			const rendered = renderA3ms(parsed);
+			const blob = encodeWaveBlob(rendered);
+			const meta = mergeTrackIntoA3msMeta(parsed.meta || {}, detail && detail.track, source);
+
+			pauseMedia('reload');
+
+			currentA3msInfo = {
+				cc: parsed.cc,
+				sr: parsed.sr,
+				tdms: parsed.tdms,
+				meta: meta
+			};
+			currentQuery = {};
+			currentTrack = {
+				src: source,
+				title: cleanText(meta.title || 'A3MS Synth'),
+				artist: cleanText(meta.artist || 'A3M Synth'),
+				album: cleanText(meta.album || 'A3MS'),
+				cover: cleanText(meta.cover || '')
+			};
+
+			detail = detail || {};
+			detail.track = {
+				src: currentTrack.src,
+				title: currentTrack.title,
+				artist: currentTrack.artist,
+				album: currentTrack.album,
+				cover: currentTrack.cover
+			};
+
+			loadBlobSource(blob, source, detail, 'a3ms', parsed.cc);
 		}
 
 		function loadMedia(source, detail){
@@ -536,11 +1281,12 @@
 
 			if (!ensureAudioContext()) return;
 
-			revokeTestBlob();
+			revokeGeneratedBlob();
 			pauseMedia('reload');
 
 			currentSource = source;
 			currentKind = 'media';
+			currentA3msInfo = null;
 			currentQuery = {};
 			currentTrack = detail && detail.track ? detail.track : {
 				src: source,
@@ -549,6 +1295,8 @@
 				album: '',
 				cover: ''
 			};
+			currentMediaChannels = 2;
+			applyMediaRouting(currentMediaChannels);
 
 			applyOutputMode(requestedMode);
 
@@ -557,8 +1305,9 @@
 				src: currentSource
 			});
 			emitMeta();
+			emitVolume('load');
 
-			mediaEl.loop = false;
+			mediaEl.loop = currentLoop;
 			mediaEl.src = source;
 			mediaEl.load();
 
@@ -579,18 +1328,30 @@
 				return;
 			}
 
-			plog.log('load', source);
+			log('load', source);
 
-			if (/^test:\/\/sin(?:$|[?])/i.test(source)) loadTest(source, detail);
-			else loadMedia(source, detail);
+			if (/^test:\/\/sin(?:$|[?])/i.test(source)) {
+				loadTest(source, detail);
+				return;
+			}
+
+			if (/^a3ms:\/\//i.test(source)) {
+				loadA3ms(source, detail);
+				return;
+			}
+
+			loadMedia(source, detail);
 		}
 
-		function shiftFreq(step){
+		function shiftFreq(step, detail){
 			let autoplay = false;
 
 			if (currentKind !== 'test-shadow') return;
+			if (playlistOwnsTransport()) return;
 
-			autoplay = !!ctx.getState().playing;
+			autoplay = detail && typeof detail === 'object' && detail.autoplay != null
+				? !!detail.autoplay
+				: !!ctx.getState().playing;
 
 			currentFreqIndex += step;
 			if (currentFreqIndex < 0) currentFreqIndex = testFreqs.length - 1;
@@ -607,7 +1368,7 @@
 		listen('cmd:init', function(){
 			if (!ensureAudioContext()) return;
 			emitMeta();
-			emitVolume();
+			emitVolume('init');
 		});
 
 		listen('cmd:load', function(detail){
@@ -642,12 +1403,12 @@
 			}
 		});
 
-		listen('cmd:next', function(){
-			shiftFreq(1);
+		listen('cmd:next', function(detail){
+			shiftFreq(1, detail);
 		});
 
-		listen('cmd:prev', function(){
-			shiftFreq(-1);
+		listen('cmd:prev', function(detail){
+			shiftFreq(-1, detail);
 		});
 
 		listen('cmd:set-volume', function(detail){
@@ -658,9 +1419,16 @@
 			if (!isFinite(v)) return;
 
 			currentVolume = clamp(v, 0, 1);
-			if (currentVolume > 0 && currentMuted) currentMuted = false;
+
+			if (currentVolume > 0) {
+				currentMuted = false;
+				lastAudibleVolume = currentVolume;
+			} else {
+				currentMuted = true;
+			}
+
 			applyMasterGain();
-			emitVolume();
+			emitVolume('set-volume');
 		});
 
 		listen('cmd:set-muted', function(detail){
@@ -669,16 +1437,36 @@
 				: detail;
 
 			currentMuted = !!muted;
+
+			if (currentMuted) {
+				if (currentVolume > 0) lastAudibleVolume = currentVolume;
+				currentVolume = 0;
+			} else {
+				currentVolume = clamp(currentVolume > 0 ? currentVolume : lastAudibleVolume, 0, 1);
+				if (currentVolume <= 0) currentVolume = 1;
+				lastAudibleVolume = currentVolume;
+			}
+
 			applyMasterGain();
-			emitVolume();
+			emitVolume('set-muted');
+		});
+
+		listen('cmd:set-loop', function(detail){
+			let loop = detail && typeof detail === 'object'
+				? detail.loop
+				: detail;
+
+			applyLoop(loop);
+			emitMeta();
 		});
 
 		listen('cmd:output-mode', function(detail){
 			let mode = detail && typeof detail === 'object' ? detail.mode : detail;
 
-			plog.log('output mode', mode);
+			log('output mode', mode);
 			applyOutputMode(mode);
 			emitMeta();
+			emitVolume('output-mode');
 		});
 
 		return function(){
@@ -688,7 +1476,7 @@
 
 			for (i = 0; i < off.length; i++) off[i]();
 
-			revokeTestBlob();
+			revokeGeneratedBlob();
 
 			if (mediaEl) {
 				try { mediaEl.pause(); } catch (e) {}
@@ -718,5 +1506,5 @@
 		};
 	};
 
-	A3M.PluginOutputGraph = PluginOutputGraph;
+	a3m.PluginOutputGraph = PluginOutputGraph;
 })();

@@ -1,253 +1,174 @@
-<!-- File: 1.html -->
 <!DOCTYPE html>
 <html lang="en">
-	<!--
-		# vim: set ts=4 sw=4 sts=4 noet :
-		#STYLE RULES
-		- Preserve existing style unless readability clearly improves.
-		- Keep code visually calm, compact, and easy to scan.
-		- Prefer direct, idiomatic JS + HTML + CSS + SVG
-	-->
+<!-- file: index.1.html -->
+<!-- # vim: set ts=4 sw=4 sts=4 noet : -->
+<!--
+	#STYLE RULES
+	- Preserve existing style unless readability clearly improves.
+	- Keep code visually calm, compact, and easy to scan.
+	- Prefer direct, idiomatic JS + HTML + CSS + SVG
+-->
 	<head>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<title>Listen Another Music [A3M] AAAM</title>
-		<link rel="stylesheet" href="a3m.0.css?a3m1">
-		<style>
-			.a3m-player {
-				--a3m-volume: 1;
-				--a3m-volume-2: 1;
-				--a3m-volume-pct: 100%;
-				--a3m-volume-pct-2: 100%;
-				--a3m-progress: 0;
-				--a3m-progress-pct: 0%;
-				--a3m-panel: rgba(0, 0, 0, 0.30);
-				--a3m-panel-2: rgba(255, 255, 255, 0.08);
-				--a3m-border: rgba(255, 255, 255, 0.14);
-				--a3m-accent: #7bc3ff;
-				--a3m-accent-2: #ff6de3;
-				--a3m-text: #f2f2f2;
-				--a3m-text-soft: rgba(255, 255, 255, 0.76);
-				--a3m-text-dim: rgba(255, 255, 255, 0.56);
-				position: relative;
-				z-index: 40;
-				max-width: 760px;
-				margin: 24px auto 56px;
-				padding: 18px;
-				border: 1px solid var(--a3m-border);
-				border-radius: 18px;
-				background: var(--a3m-panel);
-				box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
-				color: var(--a3m-text);
-				backdrop-filter: blur(8px);
-			}
+		<script>
+		const A3M_ASSET_SUFFIX = '?v=22242';
 
-			.a3m-ui {
-				display: grid;
-				gap: 16px;
-			}
+		function include(){
+			let i = 0;
 
-			.a3m-ui-head {
-				display: grid;
-				gap: 4px;
+			for (i = 0; i < arguments.length; i++) {
+				document.write('<script src="' + arguments[i] + A3M_ASSET_SUFFIX + '"><\/script>');
 			}
+		}
 
-			.a3m-ui-title {
-				font-size: 1.25rem;
-				line-height: 1.2;
-				font-weight: 700;
-				word-break: break-word;
-			}
+		function css(){
+			let i = 0;
 
-			.a3m-ui-subtitle {
-				color: var(--a3m-text-soft);
-				min-height: 1.2em;
+			for (i = 0; i < arguments.length; i++) {
+				document.write('<link rel="stylesheet" href="' + arguments[i] + A3M_ASSET_SUFFIX + '">');
 			}
+		}
 
-			.a3m-ui-row {
-				display: flex;
-				flex-wrap: wrap;
-				gap: 10px;
-				align-items: center;
-			}
-
-			.a3m-ui-btn {
-				min-width: 52px;
-				height: 40px;
-				padding: 0 14px;
-				border: 1px solid var(--a3m-border);
-				border-radius: 12px;
-				background: var(--a3m-panel-2);
-				color: inherit;
-				font: inherit;
-				line-height: 1;
-				position: relative;
-				z-index: 41;
-			}
-
-			.a3m-ui-btn-toggle,
-			.a3m-ui-btn-mute {
-				min-width: 62px;
-			}
-
-			.a3m-ui-when-playing,
-			.a3m-ui-when-muted {
-				display: none;
-			}
-
-			.a3m-player[data-playing="1"] .a3m-ui-when-playing,
-			.a3m-player[data-muted="1"] .a3m-ui-when-muted {
-				display: inline;
-			}
-
-			.a3m-player[data-playing="1"] .a3m-ui-when-paused,
-			.a3m-player[data-muted="1"] .a3m-ui-when-unmuted {
-				display: none;
-			}
-
-			.a3m-ui-progress-block,
-			.a3m-ui-volume-block {
-				display: grid;
-				gap: 8px;
-			}
-
-			.a3m-ui-progress-head,
-			.a3m-ui-volume-head {
-				display: flex;
-				justify-content: space-between;
-				gap: 12px;
-				align-items: center;
-				color: var(--a3m-text-dim);
-				font-size: 0.92rem;
-			}
-
-			.a3m-ui-progress-bar,
-			.a3m-ui-volume-bar {
-				position: relative;
-				height: 10px;
-				border-radius: 999px;
-				background: rgba(255, 255, 255, 0.10);
-				overflow: hidden;
-			}
-
-			.a3m-ui-progress-fill,
-			.a3m-ui-volume-fill {
-				position: absolute;
-				left: 0;
-				top: 0;
-				bottom: 0;
-				background: linear-gradient(90deg, var(--a3m-accent), var(--a3m-accent-2));
-			}
-
-			.a3m-ui-progress-fill {
-				width: var(--a3m-progress-pct);
-			}
-
-			.a3m-ui-volume-fill {
-				width: var(--a3m-volume-pct);
-			}
-
-			.a3m-player[data-muted="1"] .a3m-ui-volume-fill {
-				opacity: 0.32;
-			}
-
-			.a3m-ui-volume-range {
-				width: 100%;
-				margin: 0;
-				position: relative;
-				z-index: 41;
-			}
-
-			.a3m-ui-state {
-				margin: 0;
-				padding: 12px 14px;
-				border: 1px solid var(--a3m-border);
-				border-radius: 14px;
-				background: rgba(0, 0, 0, 0.16);
-				color: var(--a3m-text-soft);
-				white-space: pre-wrap;
-				word-break: break-word;
-				font: 13px/1.45 monospace;
-			}
-
-			.a3m-ui-gesture {
-				position: fixed;
-				left: 0;
-				right: 0;
-				bottom: 0;
-				width: 100vw;
-				height: 50vh;
-				z-index: 20;
-				display: grid;
-				place-items: end center;
-				user-select: none;
-				touch-action: none;
-				background: transparent;
-			}
-
-			.a3m-ui-gesture-note {
-				margin-bottom: 18px;
-				padding: 10px 14px;
-				border: 1px solid var(--a3m-border);
-				border-radius: 12px;
-				background: rgba(0, 0, 0, 0.28);
-				text-align: center;
-				line-height: 1.5;
-				color: var(--a3m-text-soft);
-				pointer-events: none;
-				transition: transform 120ms ease, background 120ms ease;
-			}
-
-			.a3m-ui-gesture[data-gesture-active="1"] .a3m-ui-gesture-note {
-				transform: translateY(-2px);
-				background: rgba(0, 0, 0, 0.38);
-			}
-
-			@media (max-width: 760px) {
-				.a3m-player {
-					margin: 16px 12px 44px;
-					padding: 14px;
-				}
-			}
-		</style>
+		css(
+			'a3m.0.css',
+			'a3m.player.icons.css',
+			'a3m.player.default.css'
+		);
+		</script>
 	</head>
 	<body>
-			<div class="center">
+		<div class="header">
 			<h1>Listen Another Music</h1>
 			<div class=slogan>
 				No format, just feeling
 			</div>
-			<div>
+			<div class=links>
 				<a href="https://another-art-another-music.pages.dev/">A3M</a> |
 				<a href="https://www.youtube.com/@another-art-another-music">YT page</a> |
 				<a href="">About</a>
 			</div>
+		</div>
+
+		<!--[a3m-player]-->
+
+		<div
+			id="a3m-player"
+			class="a3m-player a3m-play"
+
+			data-playlist-src="listen2.m3u?2"
+			--data-playlist-shuffle="1"
+
+			data-output-mode="auto"
+			data-autoplay="1"
+			data-state-hidden="1"
+			data-gesture-hidden="0"
+		>
+			<div class="a3m-ui-volume-side">
+				<div class="a3m-ui-volume-v">
+					<div class="a3m-ui-volume-v-track">
+						<div class="a3m-ui-volume-v-fill"></div>
+					</div>
+					<input class="a3m-ui-volume-range a3m-ui-volume-range-v" type="range" min="0" max="1000" step="1" value="1000" data-role="volume">
+				</div>
 			</div>
-			<!--[a3m-player]-->
-			<div
-				id="a3m-player"
-				class="a3m-player a3m-play"
-				data-src="test://sin?freq=rnd"
-				data-output-mode="auto"
-				data-autoplay="0"
-			></div>
-			<script>
-			window.__logs_cfg = {
-				id: 'a3m-listen'
-			};
-			</script>
-			<script src="/libs/logs-core.js?a3m"></script>
-			<script src="/libs/logs-local.js?a3m"></script>
-			<script src="/libs/logs-ws.js?a3m"></script>
-			<script src="a3m.bus.js?a3m"></script>
-			<script src="a3m.player.js?a3m"></script>
-			<script src="a3m.plugin.output.graph.js?a3m"></script>
-			<script src="a3m.plugin.autonext.js?a3m1"></script>
-			<script src="a3m.plugin.gesture.js?a3m1"></script>
-			<script src="a3m.plugin.mediasession.js?a3m"></script>
-			<script src="a3m.plugin.covergen.js?a3m1"></script>
-			<script src="a3m.plugin.coverbg.js?a3m4"></script>
-			<script src="a3m.boot.example.js?a3m"></script>
-			<!--[/a3m-player]-->
+			<div class="a3m-ui" data-a3m-example="1">
+				<div class="a3m-ui-head">
+					<div class="a3m-ui-cover" data-a3m-cover="256"></div>
+					<div class="a3m-ui-title" data-role="title"></div>
+					<div class="a3m-ui-subtitle">
+						<span class="a3m-ui-meta" data-role="meta-artist"></span>
+						<span class="a3m-ui-meta" data-role="meta-album"></span>
+						<span class="a3m-ui-meta" data-role="meta-year"></span>
+						<span class="a3m-ui-meta" data-role="meta-track"></span>
+					</div>
+				</div>
+				<div class="a3m-ui-progress-block">
+					<div class="a3m-ui-progress-head">
+						<span data-role="playlist-pos"></span>
+						<span><span data-role="time-now"></span> / <span data-role="time-total"></span></span>
+					</div>
+					<div class="a3m-ui-progress-bar" data-role="progress">
+						<div class="a3m-ui-progress-fill"></div>
+					</div>
+				</div>
+<!--
+				<div class="a3m-ui-volume-block">
+					<div class="a3m-ui-volume-head">
+						<span>volume</span>
+						<span data-role="volume-text"></span>
+					</div>
+					<div class="a3m-ui-volume-bar">
+						<div class="a3m-ui-volume-fill"></div>
+						<input class="a3m-ui-volume-range" type="range" min="0" max="1000" step="1" value="1000" data-role="volume">
+					</div>
+				</div>
+-->
+				<div class="a3m-ui-controls">
+					<div class="a3m-ui-row a3m-ui-row-main">
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-toggle a3m-ui-btn-icon" data-act="toggle" aria-label="Play or pause"></button>
+<!--
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-stop a3m-ui-btn-icon" data-act="stop" aria-label="Stop"></button>
+-->
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-prev a3m-ui-btn-icon" data-act="prev" aria-label="Previous"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-next a3m-ui-btn-icon" data-act="next" aria-label="Next"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-shuffle a3m-ui-btn-icon" data-act="shuffle" aria-label="Shuffle"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-repeat a3m-ui-btn-icon" data-act="repeat" aria-label="Repeat"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-fullscreen a3m-ui-btn-icon" data-act="fullscreen" aria-label="Toggle fullscreen"></button>
+												<button type="button" class="a3m-ui-btn a3m-ui-btn-more a3m-ui-btn-icon" aria-label="More"></button>
+
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-playlist a3m-ui-btn-icon" data-act="playlist" aria-label="Playlist panel"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-share a3m-ui-btn-icon" data-act="share" aria-label="Share current page QR"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-share-track a3m-ui-btn-icon" data-act="share-track" aria-label="Share current track QR"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-channel a3m-ui-btn-icon" data-act="mode" aria-label="Output channel mode"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-mute a3m-ui-btn-icon" data-act="mute" aria-label="Volume or mute"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-download a3m-ui-btn-icon" aria-label="Download file"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-viewmode a3m-ui-btn-icon" aria-label="View mode"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-close a3m-ui-btn-icon" aria-label="Close"></button>
+						<button type="button" class="a3m-ui-btn a3m-ui-btn-refresh a3m-ui-btn-icon" data-act="refresh" aria-label="Refresh page"></button>
+
+						</div>
+				</div>
+
+				<pre class="a3m-ui-state" data-role="state"></pre>
+			</div>
+		</div>
+		<div class="a3m-ui-gesture" data-role="gesture-pad" data-a3m-gesture-for="a3m-player">
+			<div class="a3m-ui-gesture-note">
+				Tap play / pause<br>
+				Swipe ↑ ↓ volume<br>
+				Swipe ← → track<br>
+				Two-finger ↓ logs<br>
+				Alt+G toggle
+			</div>
+		</div>
+		<script>
+		window.__logs_cfg = {
+			id: 'a3m-listen'
+		};
+		</script>
+		<script>
+		include(
+			'/libs/logs-core.js',
+			'/libs/logs-local.js',
+			'/libs/logs-ws.js',
+			'/libs/a3m-qrcode.js',
+			'a3m.log.js',
+			'a3m.icons.js',
+			'a3m.bus.js',
+			'a3m.player.js',
+			'a3m.plugin.meta.file.js',
+			'a3m.plugin.playlist.source.js',
+			'a3m.plugin.output.graph.js',
+			'a3m.plugin.autonext.js',
+			'a3m.plugin.gesture.js',
+			'a3m.plugin.mediasession.js',
+			'a3m.plugin.covergen.js',
+			'a3m.plugin.coverbg.js',
+			'a3m.boot.example.js'
+		);
+		</script>
+		<!--[/a3m-player]-->
 	</body>
 </html>

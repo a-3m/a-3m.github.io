@@ -1,9 +1,11 @@
+/* file: a3m.plugin.gesture.js */
 /*
 # vim: set ts=4 sw=4 sts=4 noet :
 */
 
 ;(function(){
-	const A3M = window.A3M || (window.A3M = {});
+	const a3m = window.a3m || (window.a3m = {});
+	const { log } = a3m.logp('gesture');
 
 	function cleanText(s){
 		return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
@@ -44,7 +46,6 @@
 	}
 
 	PluginGesture.prototype.attach = function(ctx){
-		const plog = ctx.plog.child('gesture');
 		const bus = ctx.bus;
 		const off = [];
 		const node = this.options.node || (
@@ -138,7 +139,7 @@
 		}
 
 		function runLogsGesture(dx, dy){
-			plog.log('two-finger down -> logs');
+			log('two-finger down -> logs');
 			if (window.__logs_local && typeof window.__logs_local.rotate === 'function') {
 				window.__logs_local.rotate();
 			} else {
@@ -158,7 +159,7 @@
 			const state = ctx.getState();
 
 			if (state && state.playing) {
-				plog.log('tap -> pause');
+				log('tap -> pause');
 				ctx.command('cmd:pause', {
 					via: 'gesture',
 					dx: dx,
@@ -167,7 +168,7 @@
 				return;
 			}
 
-			plog.log('tap -> play');
+			log('tap -> play');
 			ctx.command('cmd:play', {
 				via: 'gesture',
 				dx: dx,
@@ -190,7 +191,7 @@
 
 			if (Math.abs(next - prevVolume) < 0.001 && muted === prevMuted) return;
 
-			plog.log(via, 'volume', next);
+			log(via, 'volume', next);
 			ctx.command('cmd:set-volume', {
 				via: 'gesture',
 				volume: next,
@@ -217,7 +218,7 @@
 			if (Math.abs(dx) < thresholdPx) return;
 
 			if (dx > 0) {
-				plog.log('swipe right -> prev');
+				log('swipe right -> prev');
 				ctx.command('cmd:prev', {
 					via: 'gesture',
 					dx: dx,
@@ -226,7 +227,7 @@
 				return;
 			}
 
-			plog.log('swipe left -> next');
+			log('swipe left -> next');
 			ctx.command('cmd:next', {
 				via: 'gesture',
 				dx: dx,
@@ -406,7 +407,7 @@
 		});
 
 		if (!node) {
-			plog.log('no gesture area');
+			log('no gesture area');
 			return function(){};
 		}
 
@@ -446,5 +447,5 @@
 		};
 	};
 
-	A3M.PluginGesture = PluginGesture;
+	a3m.PluginGesture = PluginGesture;
 })();
