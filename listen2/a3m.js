@@ -25,7 +25,8 @@
 		PREVIEW_TAP_PX: 16,
 		PREVIEW_SWIPE_PX: 56,
 		PREVIEW_MAX_MS: 320,
-		PROGRESS_TICK_MS: 180
+		PROGRESS_TICK_MS: 180,
+		STATUS_MS: 1800
 	};
 
 	const AUDIO_EXTS = [ 'opus', 'ogg', 'mp3', 'm4a', 'aac', 'wav', 'flac', 'oga' ];
@@ -52,8 +53,9 @@
 		auxStartedAt: 0,
 		auxMinUntil: 0,
 		progressTimer: 0,
-		statusKind: '',
-		gesture: null
+		statusTimer: 0,
+		gesture: null,
+		lastTapAt: 0
 	};
 
 	function cleanText(s){
@@ -362,21 +364,28 @@
 		});
 	}
 
-	function calmArt(){
-		const svg = '' +
-			'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">' +
-			'<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
-			'<stop offset="0" stop-color="#071014"/><stop offset="1" stop-color="#16342a"/>' +
-			'</linearGradient></defs>' +
-			'<rect width="1024" height="1024" fill="url(#g)"/>' +
-			'<g fill="none" stroke="#d8fff326" stroke-width="18" stroke-linecap="round">' +
-			'<path d="M72 430c120 18 200 18 320 0s200-18 320 0 200 18 240 0"/>' +
-			'<path d="M72 548c120 18 200 18 320 0s200-18 320 0 200 18 240 0"/>' +
-			'<path d="M72 666c120 18 200 18 320 0s200-18 320 0 200 18 240 0"/>' +
-			'</g></svg>';
-		return 'data:image/svg+xml,' + encodeURIComponent(svg);
-	}
-
+function calmArt(){
+	const svg = '' +
+		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">' +
+		'<defs>' +
+			'<linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+				'<stop offset="0" stop-color="#060712"/><stop offset="0.55" stop-color="#0d1030"/><stop offset="1" stop-color="#17163a"/>' +
+			'</linearGradient>' +
+			'<radialGradient id="r" cx="50%" cy="42%" r="72%">' +
+				'<stop offset="0" stop-color="#23205a22"/><stop offset="0.55" stop-color="#17174412"/><stop offset="1" stop-color="#06071200"/>' +
+			'</radialGradient>' +
+		'</defs>' +
+		'<rect width="1024" height="1024" fill="url(#g)"/>' +
+		'<rect width="1024" height="1024" fill="url(#r)"/>' +
+		'<g fill="none" stroke="#8a86d910" stroke-width="18" stroke-linecap="round">' +
+			'<path d="M72 820c120 18 200 18 320 0s200-18 320 0 200 18 240 0"/>' +
+		'</g>' +
+		'<text x="512" y="560" text-anchor="middle" dominant-baseline="middle"' +
+			' font-family="Arial, sans-serif" font-size="307" font-weight="700" letter-spacing="8"' +
+			' fill="#000000" opacity="0.3">[a3m]</text>' +
+		'</svg>';
+	return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
 	function calmWaveBlob(){
 		const sampleRate = 22050;
 		const seconds = 7;
@@ -449,9 +458,26 @@
 		document.title = label;
 	}
 
-	function setStatus(text, kind){
-		state.statusKind = cleanText(kind || '');
-		statusNode.textContent = cleanText(text || '');
+	function clearStatusTimer(){
+		if (state.statusTimer) clearTimeout(state.statusTimer);
+		state.statusTimer = 0;
+	}
+
+	function setStatus(text, kind, ms){
+		text = cleanText(text || '');
+		kind = cleanText(kind || '');
+
+		clearStatusTimer();
+		statusNode.textContent = text;
+		root.setAttribute('data-a3m-status', text ? kind : '');
+
+		if (!text || kind === 'error') return;
+
+		state.statusTimer = setTimeout(function(){
+			state.statusTimer = 0;
+			statusNode.textContent = '';
+			root.setAttribute('data-a3m-status', '');
+		}, ms > 0 ? ms : CFG.STATUS_MS);
 	}
 
 	function updateDownload(track){
@@ -505,12 +531,20 @@
 		} catch (e) {}
 	}
 
+	function mainReady(el){
+		return !!(el && el.__a3mIndex >= 0 && el.readyState >= 2);
+	}
+
+	function nextReady(el){
+		return !!(el && el.__a3mIndex === state.nextIndex && el.readyState >= 3);
+	}
+
 	function getToggleState(){
 		if (state.preview === 'toggle') return 'pressed';
-		if (state.statusKind === 'error' || state.net === 'fail' || state.mode === 'aux') return 'fail';
+		if (state.mode === 'aux' || root.getAttribute('data-a3m-status') === 'error' || state.net === 'fail') return 'fail';
 		if (state.mainIndex >= 0 && !mainReady(state.mainSlot)) return 'preload';
 		if (state.play === 'play') return 'active';
-		return 'idle';
+		return '';
 	}
 
 	function updateRoot(){
@@ -533,7 +567,6 @@
 		setData('debug', state.debug);
 		setData('fullscreen', fullscreenElement() ? 1 : 0);
 		setData('net', state.net);
-		setData('status', state.statusKind);
 		setData('toggle', getToggleState());
 
 		setVar('--a3m-progress', String(progress));
@@ -548,25 +581,12 @@
 		techNetNode.textContent = 'net ' + state.net;
 	}
 
-	function mainReady(el){
-		return !!(el && el.__a3mIndex >= 0 && el.readyState >= 2);
-	}
-
-	function nextReady(el){
-		return !!(el && el.__a3mIndex === state.nextIndex && el.readyState >= 3);
-	}
-
 	function tickProgress(){
 		clearInterval(state.progressTimer);
 		state.progressTimer = setInterval(function(){
 			updateRoot();
 			checkWarmWindow();
 		}, CFG.PROGRESS_TICK_MS);
-	}
-
-	function clearProgressTimer(){
-		if (state.progressTimer) clearInterval(state.progressTimer);
-		state.progressTimer = 0;
 	}
 
 	function chooseMainCover(track){
@@ -926,22 +946,46 @@
 		updateRoot();
 	}
 
-	function gestureAction(dx, dy, dt){
-		if (Math.abs(dx) <= CFG.PREVIEW_TAP_PX && Math.abs(dy) <= CFG.PREVIEW_TAP_PX && dt <= CFG.PREVIEW_MAX_MS) return 'toggle';
-		if (Math.abs(dx) >= CFG.PREVIEW_SWIPE_PX && Math.abs(dx) > Math.abs(dy) * 1.25) return dx < 0 ? 'next' : 'prev';
+	function isCenterTap(x, y){
+		const rect = root.getBoundingClientRect();
+		const cx = rect.left + (rect.width / 2);
+		const cy = rect.top + (rect.height / 2);
+		const rx = Math.min(rect.width * 0.22, 120);
+		const ry = Math.min(rect.height * 0.18, 120);
+
+		return Math.abs(x - cx) <= rx && Math.abs(y - cy) <= ry;
+	}
+
+	function gestureAction(dx, dy, dt, x, y){
+		if (Math.abs(dx) >= CFG.PREVIEW_SWIPE_PX && Math.abs(dx) > Math.abs(dy) * 1.15) return dx < 0 ? 'next' : 'prev';
+		if (Math.abs(dx) <= CFG.PREVIEW_TAP_PX && Math.abs(dy) <= CFG.PREVIEW_TAP_PX && dt <= CFG.PREVIEW_MAX_MS) {
+			return isCenterTap(x, y) ? 'toggle' : '';
+		}
 		return '';
+	}
+
+	function releaseGestureCapture(){
+		if (!state.gesture) return;
+		if (root.releasePointerCapture && state.gesture.id != null) {
+			try { root.releasePointerCapture(state.gesture.id); } catch (e) {}
+		}
 	}
 
 	function onPointerDown(e){
 		const target = e.target && e.target.closest ? e.target.closest('button,a,[data-act="seek"]') : null;
 
-		if (target) return;
+		if (target || e.isPrimary === false || state.gesture) return;
 		state.gesture = {
+			id: e.pointerId,
 			x: e.clientX,
 			y: e.clientY,
 			t: Date.now()
 		};
-		setPreview('toggle');
+		if (root.setPointerCapture) {
+			try { root.setPointerCapture(e.pointerId); } catch (e2) {}
+		}
+		if (e.cancelable) e.preventDefault();
+		setPreview(isCenterTap(e.clientX, e.clientY) ? 'toggle' : '');
 	}
 
 	function onPointerMove(e){
@@ -950,12 +994,13 @@
 		let dt = 0;
 		let act = '';
 
-		if (!state.gesture) return;
+		if (!state.gesture || e.pointerId !== state.gesture.id) return;
 		dx = e.clientX - state.gesture.x;
 		dy = e.clientY - state.gesture.y;
 		dt = Date.now() - state.gesture.t;
-		act = gestureAction(dx, dy, dt);
-		setPreview(act || 'toggle');
+		act = gestureAction(dx, dy, dt, e.clientX, e.clientY);
+		if (e.cancelable) e.preventDefault();
+		setPreview(act);
 	}
 
 	function onPointerUp(e){
@@ -963,21 +1008,38 @@
 		let dy = 0;
 		let dt = 0;
 		let act = '';
+		let now = 0;
 
-		if (!state.gesture) return;
+		if (!state.gesture || e.pointerId !== state.gesture.id) return;
 		dx = e.clientX - state.gesture.x;
 		dy = e.clientY - state.gesture.y;
 		dt = Date.now() - state.gesture.t;
-		act = gestureAction(dx, dy, dt);
+		act = gestureAction(dx, dy, dt, e.clientX, e.clientY);
+		now = Date.now();
+		if (e.cancelable) e.preventDefault();
+		releaseGestureCapture();
 		state.gesture = null;
 		clearPreview();
 
-		if (act === 'toggle') togglePlay();
-		else if (act === 'next') onNext();
-		else if (act === 'prev') onPrev();
+		if (act === 'toggle') {
+			if (now - state.lastTapAt <= 350) {
+				state.lastTapAt = 0;
+				toggleFullscreen();
+				return;
+			}
+			state.lastTapAt = now;
+			togglePlay();
+		} else {
+			state.lastTapAt = 0;
+			if (act === 'next') onNext();
+			else if (act === 'prev') onPrev();
+		}
 	}
 
-	function onPointerCancel(){
+	function onPointerCancel(e){
+		if (!state.gesture) return;
+		if (e && state.gesture.id != null && e.pointerId !== state.gesture.id) return;
+		releaseGestureCapture();
 		state.gesture = null;
 		clearPreview();
 	}
@@ -1003,11 +1065,20 @@
 			else if (act === 'fullscreen') toggleFullscreen();
 		});
 
+		root.addEventListener('dblclick', function(e){
+			const target = e.target && e.target.closest ? e.target.closest('button,a,[data-act="seek"]') : null;
+
+			if (target) return;
+			e.preventDefault();
+			toggleFullscreen();
+		});
+
 		progressNode.addEventListener('click', onProgressClick);
 		root.addEventListener('pointerdown', onPointerDown);
 		root.addEventListener('pointermove', onPointerMove);
 		root.addEventListener('pointerup', onPointerUp);
 		root.addEventListener('pointercancel', onPointerCancel);
+		root.addEventListener('lostpointercapture', onPointerCancel);
 
 		document.addEventListener('fullscreenchange', updateRoot);
 		document.addEventListener('webkitfullscreenchange', updateRoot);
