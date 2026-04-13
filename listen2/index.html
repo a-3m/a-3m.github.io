@@ -1,0 +1,100 @@
+<!-- file: index.0.html -->
+<!doctype html>
+<html lang="en">
+<!-- # vim: set ts=4 sw=4 sts=4 noet : -->
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta http-equiv="Cache-Control" content="no-store, max-age=0, must-revalidate">
+	<meta http-equiv="Pragma" content="no-cache">
+	<meta http-equiv="Expires" content="0">
+	<title>Listen Another Music</title>
+	<script>
+	(function(){
+		const q = new URLSearchParams(window.location.search);
+		const rev = q.get('v') || 'dev';
+
+		window.A3M_ASSET_REV = rev;
+		window.__logs_cfg = {
+			id: 'a3m-listen-mobile'
+		};
+
+		window.a3mIncludeCss = function(){
+			let i = 0;
+			let href = '';
+
+			for (i = 0; i < arguments.length; i++) {
+				href = String(arguments[i] || '');
+				if (!href) continue;
+				document.write('<link rel="stylesheet" href="' + href + '?v=' + encodeURIComponent(rev) + '">');
+			}
+		};
+
+		window.a3mIncludeJs = function(){
+			let i = 0;
+			let src = '';
+
+			for (i = 0; i < arguments.length; i++) {
+				src = String(arguments[i] || '');
+				if (!src) continue;
+				document.write('<script src="' + src + '?v=' + encodeURIComponent(rev) + '"><\/script>');
+			}
+		};
+	})();
+	a3mIncludeCss('a3m.mobile.css');
+	</script>
+</head>
+<body>
+	<div class="a3m-bg" data-role="bg"></div>
+
+	<div class="a3m-app" data-role="app" data-playlist-src="listen0.m3u">
+		<div class="a3m-panel">
+			<div class="a3m-cover" data-role="cover"></div>
+
+			<div class="a3m-meta">
+				<div class="a3m-title" data-role="title">Listen</div>
+				<div class="a3m-sub">
+					<span class="a3m-artist" data-role="artist"></span>
+					<span class="a3m-album" data-role="album"></span>
+					<span class="a3m-year" data-role="year"></span>
+				</div>
+			</div>
+
+			<div class="a3m-main-row">
+				<button type="button" class="a3m-btn a3m-btn-main" data-act="stop" aria-label="Stop">#</button>
+				<button type="button" class="a3m-btn a3m-btn-main" data-act="prev" aria-label="Previous">&lt;</button>
+				<button type="button" class="a3m-btn a3m-btn-play" data-act="toggle" aria-label="Play or pause">|&gt;</button>
+				<button type="button" class="a3m-btn a3m-btn-main" data-act="next" aria-label="Next">&gt;</button>
+				<button type="button" class="a3m-btn a3m-btn-main" data-act="more" aria-label="More">...</button>
+			</div>
+
+			<div class="a3m-extra-slot">
+				<div class="a3m-extra-row" data-role="extra" hidden>
+					<button type="button" class="a3m-btn a3m-btn-mini" data-act="begin" aria-label="Begin">B</button>
+					<button type="button" class="a3m-btn a3m-btn-mini" data-act="shuffle" aria-label="Shuffle">S</button>
+					<button type="button" class="a3m-btn a3m-btn-mini" data-act="repeat" aria-label="Repeat">R</button>
+					<button type="button" class="a3m-btn a3m-btn-mini" data-act="gap" aria-label="Gap test">G</button>
+					<button type="button" class="a3m-btn a3m-btn-mini" data-act="download" aria-label="Download">D</button>
+					<button type="button" class="a3m-btn a3m-btn-mini" data-act="reload" aria-label="Reload fresh">R</button>
+					<span class="a3m-extra-spacer">-</span>
+				</div>
+			</div>
+
+			<div class="a3m-status" data-role="status"></div>
+
+			<div class="a3m-progress" data-role="progress" aria-label="Progress">
+				<div class="a3m-progress-fill" data-role="progress-fill"></div>
+			</div>
+		</div>
+	</div>
+
+	<script>
+	a3mIncludeJs(
+		'/libs/logs-core.js',
+		'/libs/logs-local.js',
+		'/libs/logs-ws.js',
+		'a3m.mobile.js'
+	);
+	</script>
+</body>
+</html>
