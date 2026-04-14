@@ -675,25 +675,145 @@
 	}
 
 	function calmArt(){
+		function rnd(a, b){
+			return a + (Math.random() * (b - a));
+		}
+
+		function hsl(h, s, l, a){
+			return 'hsla(' + Math.round(h) + ',' + Math.round(s) + '%,' + Math.round(l) + '%,' + a + ')';
+		}
+
+		function rectPath(x, y, w, h){
+			return 'M' + x + ' ' + y + 'h' + w + 'v' + h + 'h-' + w + 'z';
+		}
+
+		function patternPath(rows, ox, oy, u){
+			let out = '';
+			let y = 0;
+			let x = 0;
+			let row = '';
+
+			for (y = 0; y < rows.length; y++) {
+				row = rows[y];
+				for (x = 0; x < row.length; x++) {
+					if (row.charAt(x) === 'X')
+						out += rectPath(ox + (x * u), oy + (y * u), u, u);
+				}
+			}
+
+			return out;
+		}
+
+		function patternWidth(rows){
+			let w = 0;
+			let i = 0;
+
+			for (i = 0; i < rows.length; i++)
+				w = Math.max(w, rows[i].length);
+
+			return w;
+		}
+
+		const hue = rnd(228, 286);
+		const hue2 = hue + rnd(-18, 18);
+		const hue3 = hue + rnd(18, 42);
+		const hue4 = hue - rnd(10, 24);
+
+		const bg0 = hsl(hue, 42, 5, 1);
+		const bg1 = hsl(hue2, 52, 10, 1);
+		const bg2 = hsl(hue3, 38, 14, 1);
+		const bg3 = hsl(hue4, 30, 8, 1);
+		const overlay = hsl(hue, 14, 4, 0.64);
+
+		const g = 24;
+		const thick = g * 2;
+		const len = g * 10;
+		const inset = g * 3;
+		const p = thick;
+		const gap = 1;
+
+		const a = [
+			'....',
+			'.XX.',
+			'...X',
+			'XXXX',
+			'X..X',
+			'X..X',
+			'X..X'
+		];
+
+		const n3 = [
+			'XX.',
+			'..X',
+			'..X',
+			'XX.',
+			'..X',
+			'..X',
+			'XX.'
+		];
+
+		const m = [
+			'.....',
+			' ...',
+			'XX.X',
+			'X.X.X',
+			'X.X.X',
+			'X.X.X',
+			'X.X.X'
+		];
+
+		const parts = [ a, n3, m ];
+		let totalCols = 0;
+		let i = 0;
+		let ox = 0;
+		let oy = 0;
+		let x = 0;
+		let cut = '';
+
+		for (i = 0; i < parts.length; i++) {
+			totalCols += patternWidth(parts[i]);
+			if (i + 1 < parts.length) totalCols += gap;
+		}
+
+		ox = Math.round((1024 - (totalCols * p)) / (2 * g)) * g;
+		oy = Math.round((1024 - (7 * p)) / (2 * g)) * g;
+
+		x = ox;
+		for (i = 0; i < parts.length; i++) {
+			cut += patternPath(parts[i], x, oy, p);
+			x += (patternWidth(parts[i]) + gap) * p;
+		}
+
+		cut += rectPath(inset, inset, len, thick);
+		cut += rectPath(inset, inset, thick, len);
+
+		cut += rectPath(1024 - inset - len, inset, len, thick);
+		cut += rectPath(1024 - inset - thick, inset, thick, len);
+
+		cut += rectPath(inset, 1024 - inset - thick, len, thick);
+		cut += rectPath(inset, 1024 - inset - len, thick, len);
+
+		cut += rectPath(1024 - inset - len, 1024 - inset - thick, len, thick);
+		cut += rectPath(1024 - inset - thick, 1024 - inset - len, thick, len);
+
 		const svg = '' +
-			'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">' +
+			'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" shape-rendering="crispEdges">' +
 			'<defs>' +
 				'<linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
-					'<stop offset="0" stop-color="#060712"/><stop offset="0.55" stop-color="#0d1030"/><stop offset="1" stop-color="#17163a"/>' +
+					'<stop offset="0" stop-color="' + bg0 + '"/>' +
+					'<stop offset="0.34" stop-color="' + bg1 + '"/>' +
+					'<stop offset="0.68" stop-color="' + bg2 + '"/>' +
+					'<stop offset="1" stop-color="' + bg3 + '"/>' +
 				'</linearGradient>' +
-				'<radialGradient id="r" cx="50%" cy="42%" r="72%">' +
-					'<stop offset="0" stop-color="#23205a22"/><stop offset="0.55" stop-color="#17174412"/><stop offset="1" stop-color="#06071200"/>' +
-				'</radialGradient>' +
+				'<mask id="cut">' +
+					'<rect width="1024" height="1024" fill="white"/>' +
+					'<path fill="black" d="' + cut + '"/>' +
+				'</mask>' +
 			'</defs>' +
 			'<rect width="1024" height="1024" fill="url(#g)"/>' +
-			'<rect width="1024" height="1024" fill="url(#r)"/>' +
-			'<g fill="none" stroke="#8a86d910" stroke-width="18" stroke-linecap="round">' +
-				'<path d="M72 820c120 18 200 18 320 0s200-18 320 0 200 18 240 0"/>' +
-			'</g>' +
-			'<text x="512" y="560" text-anchor="middle" dominant-baseline="middle"' +
-				' font-family="Arial, sans-serif" font-size="307" font-weight="700" letter-spacing="8"' +
-				' fill="#ffffff" opacity="0.3">[a3m]</text>' +
+			'<rect width="1024" height="1024" fill="' + overlay + '" mask="url(#cut)"/>' +
 			'</svg>';
+
 		return 'data:image/svg+xml,' + encodeURIComponent(svg);
 	}
 
