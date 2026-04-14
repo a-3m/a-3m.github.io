@@ -73,15 +73,28 @@
 		STALL_AUX_MS: 5200,
 		RESUME_RETRY_MS: 1200,
 		MAIN_READY_STATE: 2,
-		NEXT_READY_STATE: 3
+		NEXT_READY_STATE: 3,
+		MORE_HIDE_MS: 4000,
 	};
 
 	const AUDIO_EXTS = [ 'opus', 'ogg', 'mp3', 'm4a', 'aac', 'wav', 'flac', 'oga' ];
 	const COVER_EXTS = [ 'webp', 'jpg', 'jpeg', 'png', 'gif', 'avif' ];
 
+	const SESSION_KEY = id + '.session';
+
+	const sess = {
+		quality: 'norm',
+		index: -3,
+		pos: -2,
+		vol: -1,
+		repeat: 0,
+		shuffle: 0,
+		play: 0,
+		more: 0
+	};
+
 	const state = {
 		list: [],
-		index: -1,
 		mainIndex: -1,
 		nextIndex: -1,
 		mainSlot: null,
@@ -90,11 +103,7 @@
 		mode: 'main',
 		play: 'stop',
 		net: 'ok',
-		repeat: 0,
-		shuffle: 0,
 		auxTest: 0,
-		quality: 'norm',
-		more: 0,
 		preview: '',
 		coverFake: 1,
 		debug: Debug ? 1 : 0,
@@ -110,8 +119,76 @@
 		mainResumeAt: 0,
 		mainLastTime: 0,
 		mainLastMoveAt: 0,
-		qualityNode: null
+		qualityNode: null,
+		session: null,
+		more: 0,
+		moreTimer: 0,
+		...sess
 	};
+
+	function loadSession(){
+		let raw = '';
+		let data = null;
+		let k = '';
+
+		try {
+			raw = window.localStorage.getItem(SESSION_KEY) || '';
+			if (!raw) return;
+			data = JSON.parse(raw);
+			log('loadSession: ', SESSION_KEY, raw)
+
+			if (!data || typeof data !== 'object') return;
+
+			for (k in sess) {
+				if (k in data)
+					state[k] = data[k];
+			}
+		} catch (e) {}
+	}
+
+	function resetSession(){
+		let k = '';
+		for (k in sess)
+			state[k] = sess[k];
+	}
+
+	function saveSession(){
+		const out = {};
+		let k = '';
+
+		state.index = state.mainIndex >= 0 ? state.mainIndex : state.index;
+
+		for (k in sess)
+			out[k] = state[k]
+
+		const s = JSON.stringify(out);
+		try {
+			log('saveSession: ', SESSION_KEY,s)
+			window.localStorage.setItem(SESSION_KEY, s) ;
+		} catch (e) {}
+	}
+
+
+	function clearMoreTimer(){
+		if (state.moreTimer) clearTimeout(state.moreTimer);
+		state.moreTimer = 0;
+	}
+
+	function queueMoreHide(){
+		clearMoreTimer();
+		if (!state.more) return;
+
+		state.moreTimer = setTimeout(function(){
+			state.moreTimer = 0;
+			state.more = 0;
+			updateRoot();
+		}, CFG.MORE_HIDE_MS);
+	}
+
+	function touchMore(){
+		if (!state.more) return;
+		queueMoreHide();
+	}
 
 	function cleanText(s){
 		return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
@@ -1405,6 +1482,8 @@
 	function toggleMore(){
 		state.more = state.more ? 0 : 1;
 		log('toggleMore', state.more);
+		if (state.more) queueMoreHide();
+		else clearMoreTimer();
 		updateRoot();
 	}
 
@@ -1923,6 +2002,13 @@
 	}
 
 	function bootstrap(){
+		let quality = '';
+
+		resetSession();
+		loadSession();
+		if (state.more)
+			queueMoreHide();
+
 		log('bootstrap start', { playlistSrc: playlistSrc, href: window.location.href });
 		state.calmArt = calmArt();
 		state.calmBlob = calmWaveBlob();
@@ -1956,8 +2042,18 @@
 			log('bootstrap playlist ready', { count: list.length });
 			if (!list || !list.length) throw new Error('playlist empty');
 			state.list = list;
-			state.index = 0;
-			loadMain(0, false);
+
+			state.repeat = state.repeat ? 1 : 0;
+			state.shuffle = state.shuffle ? 1 : 0;
+
+			quality = cleanText(state.quality || 'norm');
+			if (quality !== 'low' && quality !== 'hi') quality = 'norm';
+			state.quality = quality;
+
+			state.index = normalizeIndex(state.index);
+			if (state.index < 0) state.index = 0;
+
+			loadMain(state.index, state.play === 'play' || state.play === 1)
 			updateRoot();
 			logState('bootstrap ready');
 		}).catch(function(err){
@@ -1972,6 +2068,13 @@
 			updateRoot();
 		});
 	}
+
+	window.addEventListener('pagehide', function(){
+		clearMoreTimer();
+		saveSession();
+	});
+
+
 
 	bootstrap();
 })();
