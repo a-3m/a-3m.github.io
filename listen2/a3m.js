@@ -754,8 +754,8 @@
 
 		const m = [
 			'.....',
-			' ...',
-			'XX.X',
+			'.....',
+			'XX.X.',
 			'X.X.X',
 			'X.X.X',
 			'X.X.X',
@@ -2121,7 +2121,29 @@
 		}
 	}
 
-	function bootstrap(){
+function setFavicon(url){
+	let el = document.querySelector('link[rel="icon"]');
+	if (!el) {
+		el = document.createElement('link');
+		el.rel = 'icon';
+		document.head.appendChild(el);
+	}
+	el.href = url;
+}
+
+function faviconArt(){
+	const svg = '' +
+		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">' +
+		'<rect width="1024" height="1024" fill="#220022"/>' +
+		'<text x="500" y="560" text-anchor="middle" dominant-baseline="middle"' +
+			' font-family="Arial, sans-serif" font-size="450" font-weight="700" letter-spacing="6"' +
+			' fill="#ffffff" opacity="1">A3M</text>' +
+		'</svg>';
+
+	return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+
+function bootstrap(){
 		let quality = '';
 
 		resetSession();
@@ -2130,7 +2152,9 @@
 			queueMoreHide();
 
 		log('bootstrap start', { playlistSrc: playlistSrc, href: window.location.href });
-		state.calmArt = calmArt();
+		state.calmArt = calmArt()
+		setFavicon(faviconArt());
+
 		state.calmBlob = calmWaveBlob();
 		setVar('--a3m-calm-url', imageVar(state.calmArt));
 
