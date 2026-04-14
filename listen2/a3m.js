@@ -852,19 +852,24 @@
 	}
 
 	function calmWaveBlob(){
-		const sampleRate = 22050;
+		const sampleRate = 48000;
 		const seconds = 7;
 		const channels = 2;
+		const bytesPerSample = 4;
 		const totalFrames = sampleRate * seconds;
-		const bytesPerSample = 2;
 		const blockAlign = channels * bytesPerSample;
 		const dataSize = totalFrames * blockAlign;
 		const buf = new ArrayBuffer(44 + dataSize);
 		const view = new DataView(buf);
+		const modes = [ 'old', 'desert', 'wind', 'hiss' ];
+		const mode = modes[Math.floor(Math.random() * modes.length)];
 		let off = 44;
 		let i = 0;
 		let ch = 0;
 		let noise = 0;
+		let air = 0;
+		let sand = 0;
+		let gust = 0;
 		let t = 0;
 		let env = 0;
 		let s = 0;
@@ -880,7 +885,7 @@
 		writeAscii(8, 'WAVE');
 		writeAscii(12, 'fmt ');
 		view.setUint32(16, 16, true);
-		view.setUint16(20, 1, true);
+		view.setUint16(20, 3, true);
 		view.setUint16(22, channels, true);
 		view.setUint32(24, sampleRate, true);
 		view.setUint32(28, sampleRate * blockAlign, true);
@@ -892,22 +897,51 @@
 		for (i = 0; i < totalFrames; i++) {
 			t = i / sampleRate;
 			noise = (noise * 0.996) + ((Math.random() * 2 - 1) * 0.004);
+			air = (air * 0.985) + ((Math.random() * 2 - 1) * 0.0035);
+			sand = ((Math.random() * 2 - 1) * 0.5) - sand * 0.72;
+			gust = 0.5 + 0.5 * Math.sin(Math.PI * 2 * t * 0.065 + 0.8 * Math.sin(Math.PI * 2 * t * 0.021));
+
 			env = 1;
 			if (t < 0.8) env = t / 0.8;
 			if (t > seconds - 1.2) env = Math.max(0, (seconds - t) / 1.2);
-			s =
-				Math.sin(Math.PI * 2 * t * 104) * 0.014 +
-				Math.sin(Math.PI * 2 * t * 151) * 0.012 +
-				noise * 0.05;
-			s *= env * 0.72;
+
+			if (mode === 'desert') {
+				s =
+					Math.sin(Math.PI * 2 * t * 84) * 0.002 +
+					Math.sin(Math.PI * 2 * t * 121) * 0.0015 +
+					noise * 0.010 +
+					air * (0.026 + gust * 0.016) +
+					sand * (0.008 + gust * 0.018);
+			} else if (mode === 'wind') {
+				s =
+					Math.sin(Math.PI * 2 * t * 72) * 0.002 +
+					noise * 0.010 +
+					air * 0.045 +
+					(Math.sin(Math.PI * 2 * t * 0.11) * 0.5 + 0.5) * sand * 0.006;
+			} else if (mode === 'hiss') {
+				s =
+					Math.sin(Math.PI * 2 * t * 96) * 0.0015 +
+					noise * 0.014 +
+					air * 0.012 +
+					sand * 0.018;
+			} else {
+				s =
+					Math.sin(Math.PI * 2 * t * 104) * 0.014 +
+					Math.sin(Math.PI * 2 * t * 151) * 0.012 +
+					noise * 0.05;
+			}
+
+			s *= env * 0.9;
+			s = clamp(s, -1, 1);
+
 			for (ch = 0; ch < channels; ch++) {
-				view.setInt16(off, Math.round(clamp(s, -1, 1) * 32767), true);
-				off += 2;
+				view.setFloat32(off, s, true);
+				off += 4;
 			}
 		}
 
 		blobUrl = URL.createObjectURL(new Blob([ buf ], { type: 'audio/wav' }));
-		log('calmWaveBlob ready', { sampleRate: sampleRate, seconds: seconds, bytes: 44 + dataSize });
+		log('calmWaveBlob ready', { sampleRate: sampleRate, seconds: seconds, bytes: 44 + dataSize, format: 'f32', mode: mode });
 		return blobUrl;
 	}
 
