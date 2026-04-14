@@ -413,7 +413,13 @@
 
 		img.onerror = function(){
 			item.state = 'fail';
-			warn('cover preload fail', url);
+			warn('cover preload fail', {
+				url: url,
+				currentSrc: cleanText(img.currentSrc || img.src || ''),
+				complete: img.complete,
+				naturalWidth: img.naturalWidth,
+				naturalHeight: img.naturalHeight
+			});
 		};
 
 		img.src = url;
@@ -1850,7 +1856,23 @@
 			const failedIndex = el === state.nextSlot ? state.nextIndex : -1;
 			const target = trackAt(state.nextIndex >= 0 ? state.nextIndex : nextIndex(1, currentIndexBase(), state.mainIndex)) || trackAt(state.index);
 
-			warn('audio error', { slot: slotInfo(el), failedIndex: failedIndex, target: trackInfo(target) });
+			//warn('audio error', { slot: slotInfo(el), failedIndex: failedIndex, target: trackInfo(target) });
+
+			const err = el && el.error;
+
+			warn('audio error', {
+				slot: slotInfo(el),
+				failedIndex: failedIndex,
+				target: trackInfo(target),
+				currentSrc: cleanText(el && (el.currentSrc || el.src) || ''),
+				networkState: el ? el.networkState : -1,
+				readyState: el ? el.readyState : -1,
+				error: err ? {
+					code: err.code || 0,
+					message: cleanText(err.message || '')
+				} : null
+			});
+
 			if (el === state.mainSlot && state.mode === 'main') {
 				if (nextReady(state.nextSlot)) {
 					state.net = 'ok';
