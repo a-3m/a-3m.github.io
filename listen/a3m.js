@@ -2127,33 +2127,70 @@
 		});
 	}
 
-	function initMediaSession(){
-		if (!('mediaSession' in navigator)) {
-			log('mediaSession unsupported');
-			return;
-		}
-		log('mediaSession init');
-		try { navigator.mediaSession.setActionHandler('play', function(){ log('mediaSession action', 'play'); togglePlay(); }); } catch (e) { warn('mediaSession setAction play failed', String(e && e.message || e)); }
-		try { navigator.mediaSession.setActionHandler('pause', function(){ log('mediaSession action', 'pause'); pauseMain(); }); } catch (e) { warn('mediaSession setAction pause failed', String(e && e.message || e)); }
-		try { navigator.mediaSession.setActionHandler('nexttrack', function(){ log('mediaSession action', 'nexttrack'); onNext(); }); } catch (e) { warn('mediaSession setAction nexttrack failed', String(e && e.message || e)); }
-		try { navigator.mediaSession.setActionHandler('previoustrack', function(){ log('mediaSession action', 'previoustrack'); onPrev(); }); } catch (e) { warn('mediaSession setAction previoustrack failed', String(e && e.message || e)); }
+function initMediaSession(){
+	var Ms = 'mediaSession';
+	var ms = null;
+	var actions = null;
+	var i = 0;
+
+	function errText(e){
+		return String(e && e.message || e);
+	}
+
+	function setAction(name, fn){
 		try {
-			navigator.mediaSession.setActionHandler('seekto', function(detail){
-				log('mediaSession action', { type: 'seekto', seekTime: detail && detail.seekTime });
-				if (!detail || !isFinite(detail.seekTime)) return;
-				if (!state.mainSlot || state.mode !== 'main') return;
-				try {
-					state.mainSlot.currentTime = clamp(detail.seekTime, 0, state.mainSlot.duration || detail.seekTime);
-					markMainMoved();
-				} catch (e) {
-					warn('mediaSession seekto failed', String(e && e.message || e));
-				}
-				updateRoot();
-			});
+			ms.setActionHandler(name, fn);
 		} catch (e) {
-			warn('mediaSession setAction seekto failed', String(e && e.message || e));
+			warn(Ms + ' setAction ' + name + ' failed', errText(e));
 		}
 	}
+
+	function bindAction(name, fn){
+		setAction(name, function(detail){
+			log(Ms + ' action', name);
+			fn(detail);
+		});
+	}
+
+	function onSeekTo(detail){
+		log(Ms + ' action', {
+			type: 'seekto',
+			seekTime: detail && detail.seekTime
+		});
+
+		if (!detail || !isFinite(detail.seekTime)) return;
+		if (!state.mainSlot || state.mode !== 'main') return;
+
+		try {
+			state.mainSlot.currentTime = clamp(detail.seekTime, 0, state.mainSlot.duration || detail.seekTime);
+			markMainMoved();
+		} catch (e) {
+			warn(Ms + ' seekto failed', errText(e));
+		}
+
+		updateRoot();
+	}
+
+	if (!(Ms in navigator)) {
+		log(Ms + ' unsupported');
+		return;
+	}
+
+	ms = navigator[Ms];
+	log(Ms + ' init');
+
+	actions = [
+		['play', togglePlay],
+		['pause', pauseMain],
+		['nexttrack', onNext],
+		['previoustrack', onPrev],
+		['seekto', onSeekTo]
+	];
+
+	for (i = 0; i < actions.length; i++) {
+		bindAction(actions[i][0], actions[i][1]);
+	}
+}
 
 function setFavicon(url){
 	let el = document.querySelector('link[rel="icon"]');
@@ -2169,7 +2206,7 @@ function faviconArt(){
 	const svg = '' +
 		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">' +
 		'<rect width="1024" height="1024" fill="#220022"/>' +
-		'<text x="500" y="560" text-anchor="middle" dominant-baseline="middle"' +
+		'<text x="512" y="560" text-anchor="middle" dominant-baseline="middle"' +
 			' font-family="Arial, sans-serif" font-size="450" font-weight="700" letter-spacing="6"' +
 			' fill="#ffffff" opacity="1">A3M</text>' +
 		'</svg>';
