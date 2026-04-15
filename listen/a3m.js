@@ -60,6 +60,7 @@
 	const CFG = {
 		NEXT_WARMUP_SEC: 10,
 		CROSSFADE_SEC: 0,
+		AUX_ENABLE: 1,
 		AUX_MIN_SEC: 7,
 		PREVIEW_TAP_PX: 16,
 		PREVIEW_SWIPE_PX: 56,
@@ -181,7 +182,7 @@
 		state.moreTimer = setTimeout(function(){
 			state.moreTimer = 0;
 			state.more = 0;
-			updateRoot();
+			updateRoot('state');
 		}, CFG.MORE_HIDE_MS);
 	}
 
@@ -402,11 +403,23 @@
 	}
 
 	function setVar(name, value){
-		root.style.setProperty(name, String(value));
+		value = String(value);
+		if (root.style.getPropertyValue(name) === value) return;
+		root.style.setProperty(name, value);
 	}
 
 	function setData(name, value){
-		root.setAttribute('data-a3m-' + name, String(value));
+		name = 'data-a3m-' + name;
+		value = String(value);
+		if (root.getAttribute(name) === value) return;
+		root.setAttribute(name, value);
+	}
+
+	function setText(node, text){
+		if (!node) return;
+		text = String(text == null ? '' : text);
+		if (node.textContent === text) return;
+		node.textContent = text;
 	}
 
 	function slot(name){
@@ -941,7 +954,13 @@
 		}
 
 		blobUrl = URL.createObjectURL(new Blob([ buf ], { type: 'audio/wav' }));
-		log('calmWaveBlob ready', { sampleRate: sampleRate, seconds: seconds, bytes: 44 + dataSize, format: 'f32', mode: mode });
+		log('calmWaveBlob ready', {
+			sampleRate: sampleRate,
+			seconds: seconds,
+			bytes: 44 + dataSize,
+			format: 'f32',
+			mode: mode
+		});
 		return blobUrl;
 	}
 
@@ -1048,8 +1067,8 @@
 
 	function refreshMediaArtwork(){
 		log('media artwork refresh', { mode: state.mode, mainIndex: state.mainIndex, nextIndex: state.nextIndex });
-		if (state.mode === 'aux') {
-			setMediaAux(trackAt(state.nextIndex >= 0 ? state.nextIndex : state.index));
+		if (auxActive()) {
+			setMediaAux(auxTrack());
 			return;
 		}
 		if (state.mainIndex >= 0) setMediaTrack(trackAt(state.mainIndex));
@@ -1063,6 +1082,44 @@
 		} catch (e) {
 			warn('media playbackState failed', String(e && e.message || e));
 		}
+	}
+
+	function auxEnabled(){
+		return !!CFG.AUX_ENABLE;
+	}
+
+	function auxActive(){
+		return state.mode === 'aux';
+	}
+
+	function auxTrack(){
+		return trackAt(state.nextIndex >= 0 ? state.nextIndex : state.index);
+	}
+
+	function auxStop(reason){
+		if (!state.auxSlot) return;
+		log('aux stop', { reason: cleanText(reason || ''), aux: slotInfo(state.auxSlot) });
+		stopSlot(state.auxSlot);
+	}
+
+	function auxApplyUi(track){
+		setMeta(track, true);
+		setCover(state.calmArt, 1);
+		setMediaAux(track);
+		updateDownload(track);
+	}
+
+	function auxNeedPromoteNext(){
+		return !!(
+			state.play === 'play' &&
+			nextReady(state.nextSlot) &&
+			(
+				auxActive() ||
+				state.net === 'fail' ||
+				!mainReady(state.mainSlot) ||
+				(state.mainSlot && (state.mainSlot.ended || state.mainSlot.error))
+			)
+		);
 	}
 
 	function clearMainStall(){
@@ -1087,11 +1144,11 @@
 			el.play().then(function(){
 				log('slot revive ok', slotInfo(el));
 				syncPlaybackState();
-				updateRoot();
+				updateRoot('all');
 			}).catch(function(err){
 				warn('slot revive failed', slotInfo(el), String(err && err.message || err));
 				syncPlaybackState();
-				updateRoot();
+				updateRoot('all');
 			});
 		} catch (e) {
 			warn('slot revive throw', slotInfo(el), String(e && e.message || e));
@@ -1101,11 +1158,11 @@
 	function revivePlayback(){
 		logState('revivePlayback');
 		if (state.play !== 'play') return;
-		if (state.mode === 'aux') {
+		if (auxActive()) {
 			if (state.nextIndex < 0 || state.nextSlot.__a3mIndex !== state.nextIndex) scheduleNext();
 			if (nextReady(state.nextSlot)) {
 				leaveAuxIfPossible();
-				if (state.mode !== 'aux') return;
+				if (!auxActive()) return;
 			}
 			reviveSlot(state.auxSlot);
 			return;
@@ -1145,28 +1202,24 @@
 
 	function getToggleState(){
 		if (state.preview === 'toggle') return 'pressed';
-		if (state.mode === 'aux' || root.getAttribute('data-a3m-status') === 'error' || state.net === 'fail') return 'fail';
+		if (auxActive() || root.getAttribute('data-a3m-status') === 'error' || state.net === 'fail') return 'fail';
 		if (state.mainIndex >= 0 && !mainReady(state.mainSlot)) return 'preload';
 		if (state.play === 'play') return 'active';
 		return '';
 	}
 
-	function updateRoot(){
+	function updateRootState(){
 		const main = state.mainSlot;
 		const next = state.nextSlot;
-		const aux = state.auxSlot;
-		const progress = state.mode === 'main' ? currentProgress(main) : 0;
-		const buffer = state.mode === 'main' ? bufferedPercent(main) : 0;
 		const total = state.list.length;
 		const idx = total > 0 && (state.mainIndex >= 0 || state.index >= 0) ? (currentIndexBase() + 1) : 0;
-		const pos = state.mode === 'main' && main && isFinite(main.currentTime) ? main.currentTime : 0;
-		const duration = state.mode === 'main' && main && isFinite(main.duration) ? main.duration : 0;
+		const q = 'quality ' + state.quality;
 
 		setData('play', state.play);
 		setData('mode', state.mode);
 		setData('main', mainReady(main) ? (state.play === 'play' ? 'playing' : 'paused') : 'idle');
 		setData('next', nextReady(next) ? 'ready' : (next && next.getAttribute('src') ? 'warming' : 'idle'));
-		setData('aux', state.mode === 'aux' ? 'playing' : 'idle');
+		setData('aux', auxActive() ? 'playing' : 'idle');
 		setData('more', state.more);
 		setData('preview', state.preview);
 		setData('repeat', state.repeat);
@@ -1177,26 +1230,56 @@
 		setData('net', state.net);
 		setData('toggle', getToggleState());
 
-		setVar('--a3m-progress', String(progress));
-		setVar('--a3m-buffer', String(buffer));
-		setVar('--a3m-main-buffer', String(bufferedPercent(main)));
-		setVar('--a3m-next-buffer', String(bufferedPercent(next)));
-		setVar('--a3m-aux-buffer', String(bufferedPercent(aux)));
 		setVar('--a3m-quality', '"' + qualityText() + '"');
 		setVar('--a3m-track-idx', cssText(idx));
 		setVar('--a3m-track-total', cssText(total));
+
+		if (state.qualityNode) {
+			if (state.qualityNode.getAttribute('aria-label') !== q)
+				state.qualityNode.setAttribute('aria-label', q);
+			if (state.qualityNode.getAttribute('title') !== q)
+				state.qualityNode.setAttribute('title', q);
+		}
+
+		setText(techNetNode, 'net ' + state.net);
+	}
+
+	function updateRootProgress(){
+		const main = state.mainSlot;
+		const next = state.nextSlot;
+		const aux = state.auxSlot;
+		const progress = state.mode === 'main' ? currentProgress(main) : 0;
+		const buffer = state.mode === 'main' ? bufferedPercent(main) : 0;
+		const pos = state.mode === 'main' && main && isFinite(main.currentTime) ? main.currentTime : 0;
+		const duration = state.mode === 'main' && main && isFinite(main.duration) ? main.duration : 0;
+		const mainBuf = Math.round(bufferedPercent(main));
+		const nextBuf = Math.round(bufferedPercent(next));
+		const auxBuf = Math.round(bufferedPercent(aux));
+
+		setVar('--a3m-progress', String(progress));
+		setVar('--a3m-buffer', String(buffer));
+		setVar('--a3m-main-buffer', String(mainBuf));
+		setVar('--a3m-next-buffer', String(nextBuf));
+		setVar('--a3m-aux-buffer', String(auxBuf));
 		setVar('--a3m-track-pos', cssText(formatClock(pos)));
 		setVar('--a3m-track-duration', cssText(formatClock(duration)));
 
-		if (state.qualityNode) {
-			state.qualityNode.setAttribute('aria-label', 'quality ' + state.quality);
-			state.qualityNode.setAttribute('title', 'quality ' + state.quality);
-		}
+		setText(techMainNode, 'main ' + (root.getAttribute('data-a3m-main') || '') + ' ' + mainBuf + '%');
+		setText(techNextNode, 'next ' + (root.getAttribute('data-a3m-next') || '') + ' ' + nextBuf + '%');
+		setText(techAuxNode, 'aux ' + (root.getAttribute('data-a3m-aux') || '') + ' ' + auxBuf + '%');
+	}
 
-		techMainNode.textContent = 'main ' + (root.getAttribute('data-a3m-main') || '') + ' ' + Math.round(bufferedPercent(main)) + '%';
-		techNextNode.textContent = 'next ' + (root.getAttribute('data-a3m-next') || '') + ' ' + Math.round(bufferedPercent(next)) + '%';
-		techAuxNode.textContent = 'aux ' + (root.getAttribute('data-a3m-aux') || '') + ' ' + Math.round(bufferedPercent(aux)) + '%';
-		techNetNode.textContent = 'net ' + state.net;
+	function updateRoot(what){
+		if (what === 'progress') {
+			updateRootProgress();
+			return;
+		}
+		if (what === 'state') {
+			updateRootState();
+			return;
+		}
+		updateRootState();
+		updateRootProgress();
 	}
 
 	function checkPlaybackRecovery(){
@@ -1206,7 +1289,7 @@
 		let stuckMs = 0;
 		let target = null;
 
-		if (state.mode === 'aux') {
+		if (auxActive()) {
 			leaveAuxIfPossible();
 			if (state.play === 'play' && state.auxSlot && state.auxSlot.paused) reviveSlot(state.auxSlot);
 			return;
@@ -1217,7 +1300,7 @@
 		pos = isFinite(main.currentTime) ? main.currentTime : 0;
 		if (Math.abs(pos - state.mainLastTime) > 0.04) {
 			markMainMoved();
-			updateRoot();
+			updateRoot('all');
 			return;
 		}
 
@@ -1235,7 +1318,7 @@
 			reviveSlot(main);
 		}
 		if (stuckMs < CFG.STALL_AUX_MS) {
-			updateRoot();
+			updateRoot('state');
 			return;
 		}
 
@@ -1256,7 +1339,7 @@
 		clearInterval(state.progressTimer);
 		log('progress timer start', CFG.PROGRESS_TICK_MS);
 		state.progressTimer = setInterval(function(){
-			updateRoot();
+			updateRoot('progress');
 			checkWarmWindow();
 			checkPlaybackRecovery();
 		}, CFG.PROGRESS_TICK_MS);
@@ -1319,6 +1402,7 @@
 		slotEl.load();
 		preloadCover(track.cover);
 	}
+
 	function swapMainNext(){
 		const oldMain = state.mainSlot;
 		const oldIndex = state.mainIndex;
@@ -1348,7 +1432,7 @@
 
 		log('beginCurrent', trackInfo(track));
 		if (!track) return;
-		if (state.mode === 'aux' && Date.now() < state.auxMinUntil && !state.auxTest) {
+		if (auxActive() && Date.now() < state.auxMinUntil && !state.auxTest) {
 			log('beginCurrent blocked by aux min', { auxMinUntil: state.auxMinUntil });
 			return;
 		}
@@ -1367,7 +1451,7 @@
 		log('stopAll', { hard: !!hard });
 		stopSlot(state.mainSlot);
 		stopSlot(state.nextSlot);
-		stopSlot(state.auxSlot);
+		auxStop('stopAll');
 		clearMainStall();
 		if (hard) {
 			resetSlot(state.nextSlot);
@@ -1388,7 +1472,7 @@
 			state.play = 'pause';
 		}
 		syncPlaybackState();
-		updateRoot();
+		updateRoot('all');
 		logState('stopAll done', { hard: !!hard });
 	}
 
@@ -1410,23 +1494,23 @@
 		state.mainSlot.play().then(function(){
 			log('playMain ok', slotInfo(state.mainSlot));
 			syncPlaybackState();
-			updateRoot();
+			updateRoot('all');
 		}).catch(function(err){
 			warn('playMain failed', trackInfo(track), String(err && err.message || err));
 			state.play = 'pause';
 			syncPlaybackState();
-			updateRoot();
+			updateRoot('all');
 		});
 	}
 
 	function pauseMain(){
 		logState('pauseMain');
 		stopSlot(state.mainSlot);
-		stopSlot(state.auxSlot);
+		auxStop('pauseMain');
 		clearMainStall();
 		state.play = 'pause';
 		syncPlaybackState();
-		updateRoot();
+		updateRoot('all');
 	}
 
 	function enterMain(track, autoplay){
@@ -1446,52 +1530,57 @@
 				log('enterMain autoplay ok', slotInfo(state.mainSlot));
 				setStatus(state.nextIndex >= 0 ? 'Preparing next track' : '');
 				syncPlaybackState();
-				updateRoot();
+				updateRoot('all');
 			}).catch(function(err){
 				warn('enterMain autoplay failed', trackInfo(track), String(err && err.message || err));
 				state.play = 'pause';
 				syncPlaybackState();
-				updateRoot();
+				updateRoot('all');
 			});
 		} else {
 			state.play = 'pause';
 			syncPlaybackState();
-			updateRoot();
+			updateRoot('all');
 		}
 	}
 
 	function enterAux(track){
-		log('enterAux', trackInfo(track));
-		state.mode = 'aux';
+		log('enterAux', { enabled: auxEnabled(), track: trackInfo(track) });
 		state.play = 'play';
 		state.net = 'fail';
 		state.auxStartedAt = Date.now();
 		state.auxMinUntil = state.auxStartedAt + (CFG.AUX_MIN_SEC * 1000);
 		clearMainStall();
-		setMeta(track, true);
-		setCover(state.calmArt, 1);
-		setMediaAux(track);
+
+		if (!auxEnabled()) {
+			setStatus('Trying next source', 'error');
+			syncPlaybackState();
+			updateRoot('all');
+			return;
+		}
+
+		state.mode = 'aux';
+		auxApplyUi(track);
 		setStatus('Trying next source', 'error');
-		updateDownload(track);
 		state.auxSlot.currentTime = 0;
 		state.auxSlot.play().then(function(){
 			log('enterAux ok', slotInfo(state.auxSlot));
 			syncPlaybackState();
-			updateRoot();
+			updateRoot('all');
 		}).catch(function(err){
 			warn('enterAux failed', trackInfo(track), String(err && err.message || err));
 			state.play = 'pause';
 			syncPlaybackState();
-			updateRoot();
+			updateRoot('all');
 		});
 	}
 
 	function leaveAuxIfPossible(){
-		if (state.mode !== 'aux') return;
+		if (!auxActive()) return;
 		if (!nextReady(state.nextSlot)) return;
 		if (Date.now() < state.auxMinUntil && !state.auxTest) return;
 		log('leaveAuxIfPossible', { aux: slotInfo(state.auxSlot), next: slotInfo(state.nextSlot) });
-		stopSlot(state.auxSlot);
+		auxStop('leaveAuxIfPossible');
 		state.net = 'ok';
 		swapMainNext();
 	}
@@ -1523,12 +1612,16 @@
 
 		state.mainSlot.addEventListener('canplay', function onCanPlay(){
 			state.mainSlot.removeEventListener('canplay', onCanPlay);
-			log('loadMain canplay listener', { index: index, currentMainIndex: state.mainIndex, slot: slotInfo(state.mainSlot) });
+			log('loadMain canplay listener', {
+				index: index,
+				currentMainIndex: state.mainIndex,
+				slot: slotInfo(state.mainSlot)
+			});
 			if (state.mainIndex !== index) return;
 			enterMain(track, autoplay);
 			scheduleNext();
 		});
-		updateRoot();
+		updateRoot('all');
 	}
 
 	function scheduleNext(fromIndex, skipIndex){
@@ -1538,21 +1631,21 @@
 		if (index < 0 || index === state.mainIndex) {
 			state.nextIndex = -1;
 			resetSlot(state.nextSlot);
-			if (state.mode !== 'aux') setStatus('');
-			updateRoot();
+			if (!auxActive()) setStatus('');
+			updateRoot('state');
 			return;
 		}
 		state.nextIndex = index;
-		if (state.mode === 'aux') setStatus('Recovering playback', 'error');
+		if (auxActive()) setStatus('Recovering playback', 'error');
 		else setStatus('Preparing next track');
 		prepareTrack(state.nextSlot, index);
-		updateRoot();
+		updateRoot('state');
 	}
 
 	function checkWarmWindow(){
 		let left = 0;
 
-		if (state.mode === 'aux') {
+		if (auxActive()) {
 			leaveAuxIfPossible();
 			return;
 		}
@@ -1580,22 +1673,32 @@
 		scheduleNext();
 	}
 
+	function seekToTime(time){
+		if (!isFinite(time)) return;
+		if (state.mode !== 'main') return;
+		if (!state.mainSlot || !isFinite(state.mainSlot.duration) || state.mainSlot.duration <= 0) return;
+
+		try {
+			state.mainSlot.currentTime = clamp(time, 0, state.mainSlot.duration || time);
+			log("seekToTime: " + state.mainSlot.currentTime );
+			markMainMoved();
+		} catch (e) {
+			warn('seekToTime failed', String(e && e.message || e));
+		}
+
+		updateRoot('all');
+	}
+
 	function seekToRatio(ratio){
 		if (state.mode !== 'main') return;
 		if (!state.mainSlot || !isFinite(state.mainSlot.duration) || state.mainSlot.duration <= 0) return;
 		log('seekToRatio', { ratio: ratio, duration: round1(state.mainSlot.duration) });
-		try {
-			state.mainSlot.currentTime = clamp(ratio, 0, 1) * state.mainSlot.duration;
-			markMainMoved();
-		} catch (e) {
-			warn('seekToRatio failed', String(e && e.message || e));
-		}
-		updateRoot();
+		seekToTime(clamp(ratio, 0, 1) * state.mainSlot.duration);
 	}
 
 	function togglePlay(){
 		logState('togglePlay');
-		if (state.mode === 'aux') {
+		if (auxActive()) {
 			if (state.play === 'play') {
 				pauseMain();
 				return;
@@ -1624,8 +1727,8 @@
 
 	function onNext(){
 		log('action next');
-		if (state.mode === 'aux' && nextReady(state.nextSlot)) {
-			stopSlot(state.auxSlot);
+		if (auxActive() && nextReady(state.nextSlot)) {
+			auxStop('onNext');
 			state.net = 'ok';
 			swapMainNext();
 			return;
@@ -1638,35 +1741,40 @@
 		log('toggleMore', state.more);
 		if (state.more) queueMoreHide();
 		else clearMoreTimer();
-		updateRoot();
+		updateRoot('state');
 	}
 
 	function toggleRepeat(){
 		state.repeat = state.repeat ? 0 : 1;
 		log('toggleRepeat', state.repeat);
-		updateRoot();
+		updateRoot('state');
 	}
 
 	function toggleShuffle(){
 		state.shuffle = state.shuffle ? 0 : 1;
 		log('toggleShuffle', state.shuffle);
-		updateRoot();
+		updateRoot('state');
 	}
 
 	function toggleAuxTest(){
 		const track = trackAt(state.index >= 0 ? state.index : 0);
 
+		if (!auxEnabled()) {
+			log('toggleAuxTest disabled');
+			return;
+		}
+
 		state.auxTest = state.auxTest ? 0 : 1;
 		log('toggleAuxTest', { auxTest: state.auxTest, track: trackInfo(track) });
 		if (state.auxTest) {
 			enterAux(track);
-		} else if (state.mode === 'aux') {
-			stopSlot(state.auxSlot);
+		} else if (auxActive()) {
+			auxStop('toggleAuxTest');
 			state.net = 'ok';
 			if (nextReady(state.nextSlot)) swapMainNext();
 			else if (state.mainIndex >= 0) enterMain(trackAt(state.mainIndex), state.play === 'play');
 		}
-		updateRoot();
+		updateRoot('state');
 	}
 
 	function toggleQuality(){
@@ -1674,7 +1782,7 @@
 		else if (state.quality === 'low') state.quality = 'hi';
 		else state.quality = 'norm';
 		log('toggleQuality', state.quality);
-		updateRoot();
+		updateRoot('state');
 	}
 
 	function refreshPage(){
@@ -1703,25 +1811,23 @@
 		if (fullscreenElement()) {
 			if (document.exitFullscreen) document.exitFullscreen();
 			else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-			updateRoot();
 			return;
 		}
 		if (node.requestFullscreen) node.requestFullscreen();
 		else if (node.webkitRequestFullscreen) node.webkitRequestFullscreen();
-		updateRoot();
 	}
 
 	function setPreview(name){
 		state.preview = cleanText(name || '');
 		debug('preview', state.preview);
-		updateRoot();
+		updateRoot('state');
 	}
 
 	function clearPreview(){
 		if (!state.preview) return;
 		debug('preview clear', state.preview);
 		state.preview = '';
-		updateRoot();
+		updateRoot('state');
 	}
 
 	function clearLongPressTimer(){
@@ -1851,6 +1957,7 @@
 			else if (act === 'prev') onPrev();
 		}
 	}
+
 	function onPointerCancel(e){
 		if (!state.gesture) return;
 		if (e && state.gesture.id != null && e.pointerId !== state.gesture.id) return;
@@ -1911,11 +2018,11 @@
 
 		document.addEventListener('fullscreenchange', function(){
 			log('fullscreenchange', { active: !!fullscreenElement() });
-			updateRoot();
+			updateRoot('state');
 		});
 		document.addEventListener('webkitfullscreenchange', function(){
 			log('webkitfullscreenchange', { active: !!fullscreenElement() });
-			updateRoot();
+			updateRoot('state');
 		});
 		document.addEventListener('visibilitychange', function(){
 			log('visibilitychange', { hidden: !!document.hidden });
@@ -1991,13 +2098,7 @@
 			t = parseSeekValue(spec, state.mainSlot.duration, state.mainSlot.currentTime);
 			if (!isFinite(t)) return;
 
-			try {
-				state.mainSlot.currentTime = t;
-				markMainMoved();
-			} catch (e) {
-				warn('seekTo failed', spec, String(e && e.message || e));
-			}
-			updateRoot();
+			seekToTime(t);
 		}
 
 		document.addEventListener('keydown', function(e){
@@ -2048,22 +2149,29 @@
 				markMainMoved();
 				if (state.mode === 'main' && state.play === 'play') reviveSlot(el);
 			}
-			updateRoot();
-			if (el === state.nextSlot && state.mode === 'aux') leaveAuxIfPossible();
+			updateRoot('all');
+			if (el === state.nextSlot) {
+				if (auxActive()) leaveAuxIfPossible();
+				else if (auxNeedPromoteNext()) {
+					log('audio canplay promote next', slotInfo(el));
+					state.net = 'ok';
+					swapMainNext();
+				}
+			}
 		});
 		el.addEventListener('progress', function(){
-			updateRoot();
+			updateRoot('progress');
 		});
 		el.addEventListener('timeupdate', function(){
 			if (el === state.mainSlot) markMainMoved();
-			updateRoot();
+			updateRoot('progress');
 		});
 		el.addEventListener('waiting', function(){
 			log('audio waiting', slotInfo(el));
 			if (el === state.mainSlot && state.mode === 'main' && state.play === 'play') {
 				state.net = 'slow';
 				if (!state.mainStallAt) state.mainStallAt = Date.now();
-				updateRoot();
+				updateRoot('state');
 			}
 		});
 		el.addEventListener('stalled', function(){
@@ -2071,19 +2179,19 @@
 			if (el === state.mainSlot && state.mode === 'main' && state.play === 'play') {
 				state.net = 'slow';
 				if (!state.mainStallAt) state.mainStallAt = Date.now();
-				updateRoot();
+				updateRoot('state');
 			}
 		});
 		el.addEventListener('playing', function(){
 			log('audio playing', slotInfo(el));
 			if (el === state.mainSlot) markMainMoved();
 			state.net = 'ok';
-			updateRoot();
+			updateRoot('all');
 		});
 		el.addEventListener('ended', function(){
 			log('audio ended', slotInfo(el));
 			if (el === state.mainSlot && state.mode === 'main') onMainEnded();
-			else if (el === state.auxSlot && state.mode === 'aux') leaveAuxIfPossible();
+			else if (el === state.auxSlot && auxActive()) leaveAuxIfPossible();
 		});
 		el.addEventListener('error', function(){
 			const failedIndex = el === state.nextSlot ? state.nextIndex : -1;
@@ -2122,99 +2230,79 @@
 				resetSlot(state.nextSlot);
 				state.nextIndex = -1;
 				scheduleNext(currentIndexBase(), failedIndex);
-				updateRoot();
 			}
 		});
 	}
 
-function initMediaSession(){
-	var Ms = 'mediaSession';
-	var ms = null;
-	var actions = null;
-	var i = 0;
+	function initMediaSession(){
+		var Ms = 'mediaSession';
+		var ms = null;
+		var actions = null;
+		var i = 0;
 
-	function errText(e){
-		return String(e && e.message || e);
-	}
+		function errText(e){
+			return String(e && e.message || e);
+		}
 
-	function setAction(name, fn){
-		try {
-			ms.setActionHandler(name, fn);
-		} catch (e) {
-			warn(Ms + ' setAction ' + name + ' failed', errText(e));
+		function setAction(name, fn){
+			try {
+				ms.setActionHandler(name, fn);
+			} catch (e) {
+				warn(Ms + ' setAction ' + name + ' failed', errText(e));
+			}
+		}
+
+		function bindAction(name, fn){
+			setAction(name, function(detail){
+				log(Ms + ' action', name);
+				fn(detail);
+			});
+		}
+
+		if (!(Ms in navigator)) {
+			log(Ms + ' unsupported');
+			return;
+		}
+
+		ms = navigator[Ms];
+		log(Ms + ' init');
+
+		actions = [
+			['play', togglePlay],
+			['pause', pauseMain],
+			['nexttrack', onNext],
+			['previoustrack', onPrev],
+			['seekto', function(d){ seekToTime(d && d.seekTime); }]
+		];
+
+		for (i = 0; i < actions.length; i++) {
+			bindAction(actions[i][0], actions[i][1]);
 		}
 	}
 
-	function bindAction(name, fn){
-		setAction(name, function(detail){
-			log(Ms + ' action', name);
-			fn(detail);
-		});
-	}
-
-	function onSeekTo(detail){
-		log(Ms + ' action', {
-			type: 'seekto',
-			seekTime: detail && detail.seekTime
-		});
-
-		if (!detail || !isFinite(detail.seekTime)) return;
-		if (!state.mainSlot || state.mode !== 'main') return;
-
-		try {
-			state.mainSlot.currentTime = clamp(detail.seekTime, 0, state.mainSlot.duration || detail.seekTime);
-			markMainMoved();
-		} catch (e) {
-			warn(Ms + ' seekto failed', errText(e));
+	function setFavicon(url){
+		let el = document.querySelector('link[rel="icon"]');
+		if (!el) {
+			el = document.createElement('link');
+			el.rel = 'icon';
+			document.head.appendChild(el);
 		}
-
-		updateRoot();
+		el.href = url;
 	}
 
-	if (!(Ms in navigator)) {
-		log(Ms + ' unsupported');
-		return;
+	function faviconArt(){
+		const svg = '' +
+			'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">' +
+			'<rect width="1024" height="1024" fill="#220022"/>' +
+			'<text x="512" y="560" text-anchor="middle" dominant-baseline="middle"' +
+				' font-family="Arial, sans-serif" font-size="450" font-weight="700" letter-spacing="6"' +
+				' fill="#ffffff" opacity="1">A3M</text>' +
+			'</svg>';
+
+		return 'data:image/svg+xml,' + encodeURIComponent(svg);
 	}
 
-	ms = navigator[Ms];
-	log(Ms + ' init');
-
-	actions = [
-		['play', togglePlay],
-		['pause', pauseMain],
-		['nexttrack', onNext],
-		['previoustrack', onPrev],
-		['seekto', onSeekTo]
-	];
-
-	for (i = 0; i < actions.length; i++) {
-		bindAction(actions[i][0], actions[i][1]);
-	}
-}
-
-function setFavicon(url){
-	let el = document.querySelector('link[rel="icon"]');
-	if (!el) {
-		el = document.createElement('link');
-		el.rel = 'icon';
-		document.head.appendChild(el);
-	}
-	el.href = url;
-}
-
-function faviconArt(){
-	const svg = '' +
-		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">' +
-		'<rect width="1024" height="1024" fill="#220022"/>' +
-		'<text x="512" y="560" text-anchor="middle" dominant-baseline="middle"' +
-			' font-family="Arial, sans-serif" font-size="450" font-weight="700" letter-spacing="6"' +
-			' fill="#ffffff" opacity="1">A3M</text>' +
-		'</svg>';
-
-	return 'data:image/svg+xml,' + encodeURIComponent(svg);
-}
-
-function bootstrap(){
+	function bootstrap(){
 		let quality = '';
 
 		resetSession();
@@ -2269,7 +2357,6 @@ function bootstrap(){
 			if (state.index < 0) state.index = 0;
 
 			loadMain(state.index, state.play === 'play' || state.play === 1)
-			updateRoot();
 			logState('bootstrap ready');
 		}).catch(function(err){
 			warn('bootstrap failed', String(err && err.message || err));
@@ -2280,7 +2367,7 @@ function bootstrap(){
 			yearNode.textContent = '';
 			setCover(state.calmArt, 1);
 			setStatus('Please reload', 'error');
-			updateRoot();
+			updateRoot('all');
 		});
 	}
 
@@ -2288,8 +2375,6 @@ function bootstrap(){
 		clearMoreTimer();
 		saveSession();
 	});
-
-
 
 	bootstrap();
 })();
