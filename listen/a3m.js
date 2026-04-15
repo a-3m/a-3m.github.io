@@ -59,19 +59,19 @@
 
 	const CFG = {
 		NEXT_WARMUP_SEC: 10,
-		CROSSFADE_SEC: 0,
 		AUX_ENABLE: 1,
-		AUX_MIN_SEC: 7,
+		AUX_BLOCK_SEC: 7,
+		GAP_ARM_MS: 2000,
 		PREVIEW_TAP_PX: 16,
 		PREVIEW_SWIPE_PX: 56,
 		PREVIEW_MAX_MS: 320,
 		PREVIEW_SWIPE_DOWN_PX: 88,
 		LONG_PRESS_MS: 480,
 		LONG_PRESS_MOVE_PX: 14,
+		PROGRESS_GUARD_PX: 18,
 		PROGRESS_TICK_MS: 180,
 		STATUS_MS: 1800,
 		STALL_RESUME_MS: 1400,
-		STALL_AUX_MS: 5200,
 		RESUME_RETRY_MS: 1200,
 		MAIN_READY_STATE: 2,
 		NEXT_READY_STATE: 3,
@@ -108,14 +108,15 @@
 		preview: '',
 		coverFake: 1,
 		debug: Debug ? 1 : 0,
-		auxStartedAt: 0,
-		auxMinUntil: 0,
 		progressTimer: 0,
 		statusTimer: 0,
 		longPressTimer: 0,
 		gesture: null,
+		seekDrag: null,
 		lastTapAt: 0,
+		calmArt: '',
 		calmArtPng: '',
+		calmBlob: '',
 		mainStallAt: 0,
 		mainResumeAt: 0,
 		mainLastTime: 0,
@@ -124,6 +125,17 @@
 		session: null,
 		more: 0,
 		moreTimer: 0,
+		gap: {
+			armedAt: 0,
+			reason: '',
+			waitCount: 0,
+			notified: 0,
+			recovered: 0
+		},
+		aux: {
+			blocking: 0,
+			testing: 0
+		},
 		...sess
 	};
 
@@ -136,7 +148,7 @@
 			raw = window.localStorage.getItem(SESSION_KEY) || '';
 			if (!raw) return;
 			data = JSON.parse(raw);
-			log('loadSession: ', SESSION_KEY, raw)
+			log('loadSession', { key: SESSION_KEY, raw: raw });
 
 			if (!data || typeof data !== 'object') return;
 
@@ -160,15 +172,13 @@
 		state.index = state.mainIndex >= 0 ? state.mainIndex : state.index;
 
 		for (k in sess)
-			out[k] = state[k]
+			out[k] = state[k];
 
-		const s = JSON.stringify(out);
 		try {
-			log('saveSession: ', SESSION_KEY,s)
-			window.localStorage.setItem(SESSION_KEY, s) ;
+			log('saveSession', { key: SESSION_KEY, out: out });
+			window.localStorage.setItem(SESSION_KEY, JSON.stringify(out));
 		} catch (e) {}
 	}
-
 
 	function clearMoreTimer(){
 		if (state.moreTimer) clearTimeout(state.moreTimer);
@@ -184,11 +194,6 @@
 			state.more = 0;
 			updateRoot('state');
 		}, CFG.MORE_HIDE_MS);
-	}
-
-	function touchMore(){
-		if (!state.more) return;
-		queueMoreHide();
 	}
 
 	function cleanText(s){
@@ -225,14 +230,14 @@
 			artist: cleanText(track && track.meta && track.meta.artist || ''),
 			album: cleanText(track && track.meta && track.meta.album || ''),
 			year: cleanText(track && track.meta && track.meta.year || ''),
-			src: (track && track.src || ''),
-			cover: (track && track.cover || '')
+			src: up(track && track.src || ''),
+			cover: up(track && track.cover || '')
 		};
 	}
 
 	function safeLogUrl(s){
-		var i = 0;
-		var cut = 160;
+		let i = 0;
+		const cut = 160;
 
 		s = String(s == null ? '' : s);
 
@@ -256,7 +261,7 @@
 			ended: !!(el && el.ended),
 			currentTime: round1(el && el.currentTime),
 			duration: round1(el && el.duration),
-			src: (el && (el.currentSrc || el.getAttribute('src')) || '')
+			src: up(el && (el.currentSrc || el.getAttribute('src')) || '')
 		};
 	}
 
@@ -271,6 +276,8 @@
 			repeat: state.repeat,
 			shuffle: state.shuffle,
 			auxTest: state.auxTest,
+			auxBlocking: state.aux.blocking,
+			gap: state.gap,
 			quality: state.quality,
 			more: state.more,
 			preview: state.preview,
@@ -454,6 +461,7 @@
 			warn('slot reset load failed', slotInfo(el), String(e && e.message || e));
 		}
 		el.__a3mIndex = -1;
+		el.__a3mResolvedSrc = '';
 	}
 
 	function bufferedPercent(el){
@@ -498,7 +506,7 @@
 
 		img.onload = function(){
 			item.state = 'ok';
-			log('cover preload ok', url);
+			log('cover preload ok', up(url));
 		};
 
 		img.onerror = function(){
@@ -645,9 +653,8 @@
 		for (i = 0; i < lines.length; i++) {
 			line = cleanText(lines[i]);
 			if (!line || line.charAt(0) === '#' || line.charAt(0) === ';') continue;
-			if (/^a3ms:\/\//i.test(line)) {
+			if (/^a3ms:\/\//i.test(line))
 				continue;
-			}
 
 			url = resolveUrl(baseUrl, line);
 			if (isCoverPath(url)) {
@@ -799,13 +806,10 @@
 
 		cut += rectPath(inset, inset, len, thick);
 		cut += rectPath(inset, inset, thick, len);
-
 		cut += rectPath(1024 - inset - len, inset, len, thick);
 		cut += rectPath(1024 - inset - thick, inset, thick, len);
-
 		cut += rectPath(inset, 1024 - inset - thick, len, thick);
 		cut += rectPath(inset, 1024 - inset - len, thick, len);
-
 		cut += rectPath(1024 - inset - len, 1024 - inset - thick, len, thick);
 		cut += rectPath(1024 - inset - thick, 1024 - inset - len, thick, len);
 
@@ -866,7 +870,7 @@
 
 	function calmWaveBlob(){
 		const sampleRate = 48000;
-		const seconds = 7;
+		const seconds = CFG.AUX_BLOCK_SEC;
 		const channels = 2;
 		const bytesPerSample = 4;
 		const totalFrames = sampleRate * seconds;
@@ -969,15 +973,20 @@
 		return cleanText(track.meta.title || 'Listen');
 	}
 
-	function setMeta(track, auxMode){
-		const label = auxMode ? 'Preparing next track' : trackLabel(track);
+	function chooseMainCover(track){
+		if (track && cleanText(track.cover || '')) return cleanText(track.cover);
+		return state.calmArt;
+	}
+
+	function setMeta(track){
+		const label = trackLabel(track);
 
 		titleNode.textContent = label;
-		artistNode.textContent = auxMode ? 'Please calm' : cleanText(track && track.meta.artist || '');
-		albumNode.textContent = auxMode ? cleanText(track && track.meta.title || '') : cleanText(track && track.meta.album || '');
-		yearNode.textContent = auxMode ? '' : cleanText(track && track.meta.year || '');
+		artistNode.textContent = cleanText(track && track.meta.artist || '');
+		albumNode.textContent = cleanText(track && track.meta.album || '');
+		yearNode.textContent = cleanText(track && track.meta.year || '');
 		document.title = label;
-		log('meta set', { aux: !!auxMode, label: label, track: trackInfo(track) });
+		log('meta set', { track: trackInfo(track) });
 	}
 
 	function clearStatusTimer(){
@@ -989,19 +998,44 @@
 		text = cleanText(text || '');
 		kind = cleanText(kind || '');
 
+		if (
+			statusNode.textContent === text &&
+			root.getAttribute('data-a3m-status') === kind
+		) return;
+
 		clearStatusTimer();
 		statusNode.textContent = text;
-		root.setAttribute('data-a3m-status', text ? kind : '');
-		log('status', { text: text, kind: kind, ms: ms > 0 ? ms : CFG.STATUS_MS });
+		root.setAttribute('data-a3m-status', kind);
+		log('status', { text: text, kind: kind, ms: ms > 0 ? ms : 0 });
 
-		if (!text || kind === 'error') return;
+		if (!text || kind === 'error' || !(ms > 0)) return;
 
 		state.statusTimer = setTimeout(function(){
 			state.statusTimer = 0;
 			statusNode.textContent = '';
 			root.setAttribute('data-a3m-status', '');
 			log('status clear');
-		}, ms > 0 ? ms : CFG.STATUS_MS);
+		}, ms);
+	}
+
+	function refreshStatus(){
+		if (state.auxTest) {
+			setStatus('Aux test', 'error');
+			return;
+		}
+		if (state.gap.notified && state.gap.waitCount > 0) {
+			setStatus('Wait! ' + state.gap.waitCount + ' · ' + gapDetail(), 'error');
+			return;
+		}
+		if (state.aux.blocking) {
+			setStatus(gapDetail(), 'error');
+			return;
+		}
+		if (state.play === 'play' && state.nextIndex >= 0) {
+			setStatus('Preparing next track', '', 0);
+			return;
+		}
+		setStatus('', '', 0);
 	}
 
 	function updateDownload(track){
@@ -1035,6 +1069,12 @@
 		];
 	}
 
+	function mediaTrack(){
+		if (state.mainIndex >= 0) return trackAt(state.mainIndex);
+		if (state.index >= 0) return trackAt(state.index);
+		return null;
+	}
+
 	function setMediaTrack(track){
 		if (!('mediaSession' in navigator) || !track) return;
 		try {
@@ -1050,25 +1090,33 @@
 		}
 	}
 
-	function setMediaAux(track){
-		if (!('mediaSession' in navigator)) return;
+	function gapDetail(){
+		return cleanText(state.gap.reason || 'Playback gap');
+	}
+
+	function setMediaGap(track){
+		if (!('mediaSession' in navigator) || !track) return;
 		try {
 			navigator.mediaSession.metadata = new MediaMetadata({
-				title: 'Preparing next track',
-				artist: 'Please calm',
-				album: cleanText(track && track.meta && track.meta.title || 'A3M Listen'),
+				title: cleanText(track.meta.title || ''),
+				artist: 'Wait! ' + state.gap.waitCount,
+				album: gapDetail(),
 				artwork: mediaArtwork(state.calmArt)
 			});
-			log('media aux', trackInfo(track));
+			log('media gap', {
+				wait: state.gap.waitCount,
+				detail: gapDetail(),
+				track: trackInfo(track)
+			});
 		} catch (e) {
-			warn('media aux failed', trackInfo(track), String(e && e.message || e));
+			warn('media gap failed', trackInfo(track), String(e && e.message || e));
 		}
 	}
 
 	function refreshMediaArtwork(){
-		log('media artwork refresh', { mode: state.mode, mainIndex: state.mainIndex, nextIndex: state.nextIndex });
-		if (auxActive()) {
-			setMediaAux(auxTrack());
+		log('media artwork refresh', { mainIndex: state.mainIndex, nextIndex: state.nextIndex, gap: state.gap });
+		if (state.gap.notified && state.gap.waitCount > 0) {
+			setMediaGap(mediaTrack());
 			return;
 		}
 		if (state.mainIndex >= 0) setMediaTrack(trackAt(state.mainIndex));
@@ -1084,46 +1132,22 @@
 		}
 	}
 
-	function auxEnabled(){
-		return !!CFG.AUX_ENABLE;
+	function slotReady(el, index, minReady){
+		minReady = minReady || 2;
+		return !!(el && index >= 0 && el.__a3mIndex === index && !el.error && el.readyState >= minReady);
 	}
 
-	function auxActive(){
-		return state.mode === 'aux';
+	function mainReady(el){
+		return slotReady(el, state.mainIndex, CFG.MAIN_READY_STATE);
 	}
 
-	function auxTrack(){
-		return trackAt(state.nextIndex >= 0 ? state.nextIndex : state.index);
-	}
-
-	function auxStop(reason){
-		if (!state.auxSlot) return;
-		log('aux stop', { reason: cleanText(reason || ''), aux: slotInfo(state.auxSlot) });
-		stopSlot(state.auxSlot);
-	}
-
-	function auxApplyUi(track){
-		setMeta(track, true);
-		setCover(state.calmArt, 1);
-		setMediaAux(track);
-		updateDownload(track);
-	}
-
-	function auxNeedPromoteNext(){
-		return !!(
-			state.play === 'play' &&
-			nextReady(state.nextSlot) &&
-			(
-				auxActive() ||
-				state.net === 'fail' ||
-				!mainReady(state.mainSlot) ||
-				(state.mainSlot && (state.mainSlot.ended || state.mainSlot.error))
-			)
-		);
+	function nextReady(el){
+		return slotReady(el, state.nextIndex, CFG.NEXT_READY_STATE);
 	}
 
 	function clearMainStall(){
-		if (state.mainStallAt || state.mainResumeAt) log('stall clear', { stallAt: state.mainStallAt, resumeAt: state.mainResumeAt });
+		if (state.mainStallAt || state.mainResumeAt)
+			log('stall clear', { stallAt: state.mainStallAt, resumeAt: state.mainResumeAt });
 		state.mainStallAt = 0;
 		state.mainResumeAt = 0;
 	}
@@ -1132,7 +1156,7 @@
 		state.mainLastTime = state.mainSlot && isFinite(state.mainSlot.currentTime) ? state.mainSlot.currentTime : 0;
 		state.mainLastMoveAt = Date.now();
 		clearMainStall();
-		if (state.mode === 'main' && state.play === 'play') state.net = 'ok';
+		if (state.play === 'play') state.net = 'ok';
 		debug('main moved', { time: round1(state.mainLastTime), movedAt: state.mainLastMoveAt });
 	}
 
@@ -1155,43 +1179,107 @@
 		}
 	}
 
-	function revivePlayback(){
-		logState('revivePlayback');
-		if (state.play !== 'play') return;
-		if (auxActive()) {
-			if (state.nextIndex < 0 || state.nextSlot.__a3mIndex !== state.nextIndex) scheduleNext();
-			if (nextReady(state.nextSlot)) {
-				leaveAuxIfPossible();
-				if (!auxActive()) return;
-			}
-			reviveSlot(state.auxSlot);
-			return;
-		}
-		if (nextReady(state.nextSlot) && (!mainReady(state.mainSlot) || (state.mainSlot && state.mainSlot.error) || state.net === 'fail')) {
-			log('revivePlayback swap from next');
-			state.net = 'ok';
-			swapMainNext();
-			return;
-		}
-		if (state.mainIndex >= 0 && state.mainSlot && (!state.mainSlot.getAttribute('src') || state.mainSlot.__a3mIndex !== state.mainIndex)) {
-			log('revivePlayback prepare main', { mainIndex: state.mainIndex });
-			prepareTrack(state.mainSlot, state.mainIndex);
-		}
-		reviveSlot(state.mainSlot);
-		if (state.nextIndex < 0 || state.nextSlot.__a3mIndex !== state.nextIndex) scheduleNext();
+	function auxEnabled(){
+		return !!CFG.AUX_ENABLE;
 	}
 
-	function slotReady(el, index, minReady){
-		minReady = minReady || 2;
-		return !!(el && index >= 0 && el.__a3mIndex === index && !el.error && el.readyState >= minReady);
+	function auxActive(){
+		return state.aux.blocking || state.aux.testing;
 	}
 
-	function mainReady(el){
-		return slotReady(el, state.mainIndex, CFG.MAIN_READY_STATE);
+	function isPlay(){
+		return state.play === 'play'
 	}
 
-	function nextReady(el){
-		return slotReady(el, state.nextIndex, CFG.NEXT_READY_STATE);
+	function playAuxBlock(){
+		if (!auxEnabled() || !isPlay() || state.aux.blocking || state.aux.testing) return;
+		if (!state.auxSlot) return;
+
+		state.aux.blocking = 1;
+		state.mode = 'aux';
+		state.net = 'fail';
+		log('aux block start', { gap: state.gap, aux: slotInfo(state.auxSlot) });
+
+		try { state.auxSlot.currentTime = 0; } catch (e) {
+			warn('aux currentTime reset failed', String(e && e.message || e));
+		}
+
+		state.auxSlot.play().then(function(){
+			log('aux play ok', slotInfo(state.auxSlot));
+			syncPlaybackState();
+			refreshStatus();
+			updateRoot('all');
+		}).catch(function(err){
+			state.aux.blocking = 0;
+			state.mode = 'main';
+			warn('aux play failed', String(err && err.message || err));
+			syncPlaybackState();
+			refreshStatus();
+			updateRoot('all');
+		});
+	}
+
+	function stopAux(reason){
+		if (!state.auxSlot) return;
+		log('stopAux', { reason: reason, aux: slotInfo(state.auxSlot) });
+		stopSlot(state.auxSlot);
+		state.aux.blocking = 0;
+		state.aux.testing = 0;
+		if (!state.auxTest) state.mode = 'main';
+	}
+
+	function resetGap(reason){
+		if (reason) log('resetGap', { reason: reason, gap: state.gap });
+		state.gap.armedAt = 0;
+		state.gap.reason = '';
+		state.gap.waitCount = 0;
+		state.gap.notified = 0;
+		state.gap.recovered = 0;
+		refreshStatus();
+	}
+
+	function armGap(reason){
+		if (!auxEnabled() || state.play !== 'play' || state.auxTest) return;
+		if (state.gap.armedAt) return;
+		state.gap.armedAt = Date.now();
+		state.gap.reason = cleanText(reason || 'Playback gap');
+		state.gap.recovered = 0;
+		log('armGap', { reason: state.gap.reason });
+		refreshStatus();
+		updateRoot('state');
+	}
+
+	function markRecovered(reason){
+		const track = mediaTrack();
+
+		if (!state.gap.armedAt && !state.gap.waitCount && !state.gap.notified && !state.aux.blocking) return;
+		log('markRecovered', { reason: reason, track: trackInfo(track), gap: state.gap });
+
+		state.gap.armedAt = 0;
+		state.gap.reason = '';
+		state.gap.waitCount = 0;
+		state.gap.notified = 0;
+		state.gap.recovered = 1;
+		state.net = 'ok';
+		if (track) setMediaTrack(track);
+		refreshStatus();
+		updateRoot('all');
+	}
+
+	function trackIsHealthy(){
+		if (state.play !== 'play') return false;
+		if (!state.mainSlot || state.mainIndex < 0) return false;
+		if (state.mainSlot.ended || state.mainSlot.error) return false;
+		if (state.mainLastMoveAt && Date.now() - state.mainLastMoveAt <= CFG.STALL_RESUME_MS) return true;
+		return false;
+	}
+
+	function commitTrackUi(track){
+		if (!track) return;
+		setMeta(track);
+		setCover(chooseMainCover(track), cleanText(track.cover || '') ? 0 : 1);
+		updateDownload(track);
+		setMediaTrack(track);
 	}
 
 	function qualityText(){
@@ -1216,7 +1304,7 @@
 		const q = 'quality ' + state.quality;
 
 		setData('play', state.play);
-		setData('mode', state.mode);
+		setData('mode', auxActive() ? 'aux' : 'main');
 		setData('main', mainReady(main) ? (state.play === 'play' ? 'playing' : 'paused') : 'idle');
 		setData('next', nextReady(next) ? 'ready' : (next && next.getAttribute('src') ? 'warming' : 'idle'));
 		setData('aux', auxActive() ? 'playing' : 'idle');
@@ -1248,10 +1336,10 @@
 		const main = state.mainSlot;
 		const next = state.nextSlot;
 		const aux = state.auxSlot;
-		const progress = state.mode === 'main' ? currentProgress(main) : 0;
-		const buffer = state.mode === 'main' ? bufferedPercent(main) : 0;
-		const pos = state.mode === 'main' && main && isFinite(main.currentTime) ? main.currentTime : 0;
-		const duration = state.mode === 'main' && main && isFinite(main.duration) ? main.duration : 0;
+		const progress = currentProgress(main);
+		const buffer = bufferedPercent(main);
+		const pos = main && isFinite(main.currentTime) ? main.currentTime : 0;
+		const duration = main && isFinite(main.duration) ? main.duration : 0;
 		const mainBuf = Math.round(bufferedPercent(main));
 		const nextBuf = Math.round(bufferedPercent(next));
 		const auxBuf = Math.round(bufferedPercent(aux));
@@ -1276,78 +1364,13 @@
 		}
 		if (what === 'state') {
 			updateRootState();
+			updateRootProgress();
+			refreshStatus();
 			return;
 		}
 		updateRootState();
 		updateRootProgress();
-	}
-
-	function checkPlaybackRecovery(){
-		const now = Date.now();
-		const main = state.mainSlot;
-		let pos = 0;
-		let stuckMs = 0;
-		let target = null;
-
-		if (auxActive()) {
-			leaveAuxIfPossible();
-			if (state.play === 'play' && state.auxSlot && state.auxSlot.paused) reviveSlot(state.auxSlot);
-			return;
-		}
-		if (!main || state.play !== 'play' || state.mainIndex < 0) return;
-		if (main.ended) return;
-
-		pos = isFinite(main.currentTime) ? main.currentTime : 0;
-		if (Math.abs(pos - state.mainLastTime) > 0.04) {
-			markMainMoved();
-			updateRoot('all');
-			return;
-		}
-
-		if (!state.mainLastMoveAt) state.mainLastMoveAt = now;
-		stuckMs = now - state.mainLastMoveAt;
-		if (!state.mainStallAt && (main.paused || main.readyState < CFG.NEXT_READY_STATE || stuckMs >= CFG.STALL_RESUME_MS)) {
-			state.mainStallAt = state.mainLastMoveAt || now;
-			log('recovery stall start', { stuckMs: stuckMs, main: slotInfo(main) });
-		}
-		if (!state.mainStallAt) return;
-
-		state.net = 'slow';
-		if (stuckMs >= CFG.STALL_RESUME_MS && now - state.mainResumeAt >= CFG.RESUME_RETRY_MS) {
-			log('recovery revive main', { stuckMs: stuckMs, sinceResume: now - state.mainResumeAt });
-			reviveSlot(main);
-		}
-		if (stuckMs < CFG.STALL_AUX_MS) {
-			updateRoot('state');
-			return;
-		}
-
-		if (nextReady(state.nextSlot)) {
-			log('recovery promote next', { stuckMs: stuckMs, next: slotInfo(state.nextSlot) });
-			state.net = 'ok';
-			swapMainNext();
-			return;
-		}
-
-		target = trackAt(state.nextIndex >= 0 ? state.nextIndex : nextIndex(1, currentIndexBase(), state.mainIndex)) || trackAt(state.index);
-		log('recovery enter aux', { stuckMs: stuckMs, target: trackInfo(target) });
-		enterAux(target);
-		scheduleNext();
-	}
-
-	function tickProgress(){
-		clearInterval(state.progressTimer);
-		log('progress timer start', CFG.PROGRESS_TICK_MS);
-		state.progressTimer = setInterval(function(){
-			updateRoot('progress');
-			checkWarmWindow();
-			checkPlaybackRecovery();
-		}, CFG.PROGRESS_TICK_MS);
-	}
-
-	function chooseMainCover(track){
-		if (track && cleanText(track.cover || '')) return cleanText(track.cover);
-		return state.calmArt;
+		refreshStatus();
 	}
 
 	function qualityAudioUrl(url, quality){
@@ -1372,6 +1395,10 @@
 		return url.replace(/^.*\//, '');
 	}
 
+	function up(url){
+		return baseName(url)
+	}
+
 	function prepareTrack(slotEl, index){
 		const track = trackAt(index);
 		const src = trackAudioSrc(track);
@@ -1381,7 +1408,12 @@
 			slotEl.__a3mIndex === index &&
 			cleanText(slotEl.__a3mResolvedSrc || slotEl.getAttribute('src') || '') === cleanText(src)
 		) {
-			log('prepareTrack skip', { slot: slotInfo(slotEl), index: index, src: src, quality: state.quality });
+			log('prepareTrack skip', {
+				slot: slotInfo(slotEl),
+				index: index,
+				src: up(src),
+				quality: state.quality
+			});
 			return;
 		}
 
@@ -1403,11 +1435,99 @@
 		preloadCover(track.cover);
 	}
 
-	function swapMainNext(){
+	function scheduleNext(fromIndex, skipIndex){
+		const index = nextIndex(1, fromIndex, skipIndex);
+
+		log('scheduleNext', { fromIndex: fromIndex, skipIndex: skipIndex, next: index });
+		if (index < 0 || index === state.mainIndex) {
+			state.nextIndex = -1;
+			resetSlot(state.nextSlot);
+			refreshStatus();
+			updateRoot('state');
+			return;
+		}
+
+		state.nextIndex = index;
+		prepareTrack(state.nextSlot, index);
+		refreshStatus();
+		updateRoot('state');
+	}
+
+	function enterMain(track, autoplay){
+		log('enterMain', { autoplay: !!autoplay, track: trackInfo(track) });
+		if (!track) return;
+
+		state.mode = auxActive() ? 'aux' : 'main';
+		state.net = 'ok';
+		clearMainStall();
+		commitTrackUi(track);
+
+		if (autoplay) {
+			state.play = 'play';
+			markMainMoved();
+			state.mainSlot.play().then(function(){
+				log('enterMain autoplay ok', slotInfo(state.mainSlot));
+				syncPlaybackState();
+				updateRoot('all');
+			}).catch(function(err){
+				warn('enterMain autoplay failed', trackInfo(track), String(err && err.message || err));
+				state.play = 'pause';
+				syncPlaybackState();
+				updateRoot('all');
+			});
+		} else {
+			state.play = 'pause';
+			syncPlaybackState();
+			updateRoot('all');
+		}
+	}
+
+	function loadMain(index, autoplay, forceNext){
+		const track = trackAt(index);
+
+		index = normalizeIndex(index);
+		log('loadMain', { index: index, autoplay: !!autoplay, forceNext: !!forceNext, track: trackInfo(track) });
+		if (index < 0 || !track) return;
+
+		state.index = index;
+		state.mainIndex = index;
+		state.nextIndex = -1;
+		resetSlot(state.nextSlot);
+		prepareTrack(state.mainSlot, index);
+		clearMainStall();
+		state.mainLastTime = 0;
+		state.mainLastMoveAt = 0;
+		commitTrackUi(track);
+
+		if (mainReady(state.mainSlot)) {
+			log('loadMain immediate ready', slotInfo(state.mainSlot));
+			enterMain(track, autoplay);
+			if (forceNext) scheduleNext();
+			return;
+		}
+
+		state.mainSlot.addEventListener('canplay', function onCanPlay(){
+			state.mainSlot.removeEventListener('canplay', onCanPlay);
+			log('loadMain canplay listener', {
+				index: index,
+				currentMainIndex: state.mainIndex,
+				slot: slotInfo(state.mainSlot)
+			});
+			if (state.mainIndex !== index) return;
+			enterMain(track, autoplay);
+			if (forceNext) scheduleNext();
+		});
+
+		updateRoot('all');
+	}
+
+	function swapMainNext(autoplay, forceNext){
 		const oldMain = state.mainSlot;
 		const oldIndex = state.mainIndex;
 
-		logState('swapMainNext before');
+		if (!nextReady(state.nextSlot)) return;
+
+		logState('swapMainNext before', { autoplay: !!autoplay, forceNext: !!forceNext });
 		state.mainSlot = state.nextSlot;
 		state.mainIndex = state.nextIndex;
 		state.nextSlot = oldMain;
@@ -1419,12 +1539,12 @@
 
 		if (state.mainIndex >= 0) {
 			state.index = state.mainIndex;
-			enterMain(trackAt(state.mainIndex), true);
-			scheduleNext();
+			enterMain(trackAt(state.mainIndex), autoplay == null ? true : !!autoplay);
+			if (forceNext) scheduleNext();
 		}
 
 		if (oldIndex >= 0) oldMain.__a3mIndex = -1;
-		logState('swapMainNext after');
+		logState('swapMainNext after', { autoplay: !!autoplay, forceNext: !!forceNext });
 	}
 
 	function beginCurrent(){
@@ -1432,11 +1552,7 @@
 
 		log('beginCurrent', trackInfo(track));
 		if (!track) return;
-		if (auxActive() && Date.now() < state.auxMinUntil && !state.auxTest) {
-			log('beginCurrent blocked by aux min', { auxMinUntil: state.auxMinUntil });
-			return;
-		}
-		if (state.mainSlot && state.mainSlot.__a3mIndex === state.index) {
+		if (state.mainSlot && state.mainSlot.__a3mIndex === state.index && !auxActive()) {
 			try { state.mainSlot.currentTime = 0; } catch (e) {
 				warn('beginCurrent currentTime reset failed', String(e && e.message || e));
 			}
@@ -1444,6 +1560,9 @@
 			if (state.play !== 'play') playMain();
 			return;
 		}
+
+		stopAux('beginCurrent');
+		resetGap('beginCurrent');
 		loadMain(state.index, state.play === 'play');
 	}
 
@@ -1451,8 +1570,10 @@
 		log('stopAll', { hard: !!hard });
 		stopSlot(state.mainSlot);
 		stopSlot(state.nextSlot);
-		auxStop('stopAll');
+		stopAux('stopAll');
 		clearMainStall();
+		resetGap('stopAll');
+
 		if (hard) {
 			resetSlot(state.nextSlot);
 			state.nextIndex = -1;
@@ -1471,6 +1592,7 @@
 		} else {
 			state.play = 'pause';
 		}
+
 		syncPlaybackState();
 		updateRoot('all');
 		logState('stopAll done', { hard: !!hard });
@@ -1481,15 +1603,11 @@
 
 		log('playMain', trackInfo(track));
 		if (!track) return;
-		state.mode = 'main';
+		state.mode = auxActive() ? 'aux' : 'main';
 		state.play = 'play';
 		state.net = 'ok';
 		clearMainStall();
-		setMeta(track, false);
-		setCover(chooseMainCover(track), cleanText(track.cover || '') ? 0 : 1);
-		setStatus(state.nextIndex >= 0 ? 'Preparing next track' : '');
-		setMediaTrack(track);
-		updateDownload(track);
+		commitTrackUi(track);
 		markMainMoved();
 		state.mainSlot.play().then(function(){
 			log('playMain ok', slotInfo(state.mainSlot));
@@ -1506,181 +1624,40 @@
 	function pauseMain(){
 		logState('pauseMain');
 		stopSlot(state.mainSlot);
-		auxStop('pauseMain');
+		stopSlot(state.auxSlot);
+		state.aux.blocking = 0;
+		state.aux.testing = 0;
+		state.mode = 'main';
 		clearMainStall();
 		state.play = 'pause';
 		syncPlaybackState();
 		updateRoot('all');
 	}
 
-	function enterMain(track, autoplay){
-		log('enterMain', { autoplay: !!autoplay, track: trackInfo(track) });
-		if (!track) return;
-		state.mode = 'main';
-		state.net = 'ok';
-		clearMainStall();
-		setMeta(track, false);
-		setCover(chooseMainCover(track), cleanText(track.cover || '') ? 0 : 1);
-		setMediaTrack(track);
-		updateDownload(track);
-		if (autoplay) {
-			state.play = 'play';
-			markMainMoved();
-			state.mainSlot.play().then(function(){
-				log('enterMain autoplay ok', slotInfo(state.mainSlot));
-				setStatus(state.nextIndex >= 0 ? 'Preparing next track' : '');
-				syncPlaybackState();
-				updateRoot('all');
-			}).catch(function(err){
-				warn('enterMain autoplay failed', trackInfo(track), String(err && err.message || err));
-				state.play = 'pause';
-				syncPlaybackState();
-				updateRoot('all');
-			});
-		} else {
-			state.play = 'pause';
-			syncPlaybackState();
-			updateRoot('all');
-		}
-	}
-
-	function enterAux(track){
-		log('enterAux', { enabled: auxEnabled(), track: trackInfo(track) });
-		state.play = 'play';
-		state.net = 'fail';
-		state.auxStartedAt = Date.now();
-		state.auxMinUntil = state.auxStartedAt + (CFG.AUX_MIN_SEC * 1000);
-		clearMainStall();
-
-		if (!auxEnabled()) {
-			setStatus('Trying next source', 'error');
-			syncPlaybackState();
-			updateRoot('all');
-			return;
-		}
-
-		state.mode = 'aux';
-		auxApplyUi(track);
-		setStatus('Trying next source', 'error');
-		state.auxSlot.currentTime = 0;
-		state.auxSlot.play().then(function(){
-			log('enterAux ok', slotInfo(state.auxSlot));
-			syncPlaybackState();
-			updateRoot('all');
-		}).catch(function(err){
-			warn('enterAux failed', trackInfo(track), String(err && err.message || err));
-			state.play = 'pause';
-			syncPlaybackState();
-			updateRoot('all');
-		});
-	}
-
-	function leaveAuxIfPossible(){
-		if (!auxActive()) return;
-		if (!nextReady(state.nextSlot)) return;
-		if (Date.now() < state.auxMinUntil && !state.auxTest) return;
-		log('leaveAuxIfPossible', { aux: slotInfo(state.auxSlot), next: slotInfo(state.nextSlot) });
-		auxStop('leaveAuxIfPossible');
-		state.net = 'ok';
-		swapMainNext();
-	}
-
-	function loadMain(index, autoplay){
-		const track = trackAt(index);
-
-		index = normalizeIndex(index);
-		log('loadMain', { index: index, autoplay: !!autoplay, track: trackInfo(track) });
-		if (index < 0 || !track) return;
-
-		state.index = index;
-		state.mainIndex = index;
-		prepareTrack(state.mainSlot, index);
-		clearMainStall();
-		state.mainLastTime = 0;
-		state.mainLastMoveAt = 0;
-		setMeta(track, false);
-		setCover(chooseMainCover(track), cleanText(track.cover || '') ? 0 : 1);
-		setStatus('Loading');
-		updateDownload(track);
-
-		if (mainReady(state.mainSlot)) {
-			log('loadMain immediate ready', slotInfo(state.mainSlot));
-			enterMain(track, autoplay);
-			scheduleNext();
-			return;
-		}
-
-		state.mainSlot.addEventListener('canplay', function onCanPlay(){
-			state.mainSlot.removeEventListener('canplay', onCanPlay);
-			log('loadMain canplay listener', {
-				index: index,
-				currentMainIndex: state.mainIndex,
-				slot: slotInfo(state.mainSlot)
-			});
-			if (state.mainIndex !== index) return;
-			enterMain(track, autoplay);
-			scheduleNext();
-		});
-		updateRoot('all');
-	}
-
-	function scheduleNext(fromIndex, skipIndex){
-		const index = nextIndex(1, fromIndex, skipIndex);
-
-		log('scheduleNext', { fromIndex: fromIndex, skipIndex: skipIndex, next: index });
-		if (index < 0 || index === state.mainIndex) {
-			state.nextIndex = -1;
-			resetSlot(state.nextSlot);
-			if (!auxActive()) setStatus('');
-			updateRoot('state');
-			return;
-		}
-		state.nextIndex = index;
-		if (auxActive()) setStatus('Recovering playback', 'error');
-		else setStatus('Preparing next track');
-		prepareTrack(state.nextSlot, index);
-		updateRoot('state');
-	}
-
-	function checkWarmWindow(){
-		let left = 0;
-
-		if (auxActive()) {
-			leaveAuxIfPossible();
-			return;
-		}
-		if (!state.mainSlot || state.mainSlot.__a3mIndex !== state.mainIndex) return;
-		if (!isFinite(state.mainSlot.duration) || state.mainSlot.duration <= 0) return;
-
-		left = state.mainSlot.duration - state.mainSlot.currentTime;
-		if (left <= CFG.NEXT_WARMUP_SEC && state.nextIndex < 0) {
-			log('warmWindow', { left: round1(left), main: slotInfo(state.mainSlot) });
-			scheduleNext();
-		}
-	}
-
 	function onMainEnded(){
 		logState('main ended');
+
 		if (state.repeat) {
 			beginCurrent();
 			return;
 		}
+
 		if (nextReady(state.nextSlot)) {
-			swapMainNext();
+			swapMainNext(true, true);
 			return;
 		}
-		enterAux(trackAt(state.nextIndex >= 0 ? state.nextIndex : nextIndex(1, currentIndexBase(), state.mainIndex)) || trackAt(state.index));
+
 		scheduleNext();
+		armGap('Trying next source');
+		updateRoot('state');
 	}
 
 	function seekToTime(time){
 		if (!isFinite(time)) return;
-		if (state.mode !== 'main') return;
 		if (!state.mainSlot || !isFinite(state.mainSlot.duration) || state.mainSlot.duration <= 0) return;
 
 		try {
 			state.mainSlot.currentTime = clamp(time, 0, state.mainSlot.duration || time);
-			log("seekToTime: " + state.mainSlot.currentTime );
 			markMainMoved();
 		} catch (e) {
 			warn('seekToTime failed', String(e && e.message || e));
@@ -1690,23 +1667,84 @@
 	}
 
 	function seekToRatio(ratio){
-		if (state.mode !== 'main') return;
 		if (!state.mainSlot || !isFinite(state.mainSlot.duration) || state.mainSlot.duration <= 0) return;
 		log('seekToRatio', { ratio: ratio, duration: round1(state.mainSlot.duration) });
 		seekToTime(clamp(ratio, 0, 1) * state.mainSlot.duration);
 	}
 
+	function pointNearProgress(x, y){
+		const rect = progressNode.getBoundingClientRect();
+		const pad = CFG.PROGRESS_GUARD_PX;
+
+		if (!rect || !rect.width) return false;
+		return (
+			x >= rect.left - pad &&
+			x <= rect.right + pad &&
+			y >= rect.top - pad &&
+			y <= rect.bottom + pad
+		);
+	}
+
+	function seekFromClientX(clientX, tag){
+		const rect = progressNode.getBoundingClientRect();
+		let ratio = 0;
+
+		if (!rect || !rect.width) return;
+		ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
+		log('progress ' + cleanText(tag || 'point'), { x: clientX, left: rect.left, width: rect.width, ratio: ratio });
+		seekToRatio(ratio);
+	}
+
+	function releaseSeekDrag(){
+		if (!state.seekDrag) return;
+		if (progressNode.releasePointerCapture && state.seekDrag.id != null) {
+			try { progressNode.releasePointerCapture(state.seekDrag.id); } catch (e) {
+				warn('seek release capture failed', String(e && e.message || e));
+			}
+		}
+		state.seekDrag = null;
+	}
+
+	function onProgressPointerDown(e){
+		if (e.isPrimary === false || state.seekDrag) return;
+		state.seekDrag = {
+			id: e.pointerId
+		};
+		if (progressNode.setPointerCapture) {
+			try { progressNode.setPointerCapture(e.pointerId); } catch (e2) {
+				warn('seek capture failed', String(e2 && e2.message || e2));
+			}
+		}
+		if (e.stopPropagation) e.stopPropagation();
+		if (e.cancelable) e.preventDefault();
+		seekFromClientX(e.clientX, 'down');
+	}
+
+	function onProgressPointerMove(e){
+		if (!state.seekDrag || e.pointerId !== state.seekDrag.id) return;
+		if (e.stopPropagation) e.stopPropagation();
+		if (e.cancelable) e.preventDefault();
+		seekFromClientX(e.clientX, 'move');
+	}
+
+	function onProgressPointerUp(e){
+		if (!state.seekDrag || e.pointerId !== state.seekDrag.id) return;
+		if (e.stopPropagation) e.stopPropagation();
+		if (e.cancelable) e.preventDefault();
+		seekFromClientX(e.clientX, 'up');
+		releaseSeekDrag();
+	}
+
+	function onProgressPointerCancel(e){
+		if (!state.seekDrag) return;
+		if (e && state.seekDrag.id != null && e.pointerId !== state.seekDrag.id) return;
+		if (e && e.stopPropagation) e.stopPropagation();
+		if (e && e.cancelable) e.preventDefault();
+		releaseSeekDrag();
+	}
+
 	function togglePlay(){
 		logState('togglePlay');
-		if (auxActive()) {
-			if (state.play === 'play') {
-				pauseMain();
-				return;
-			}
-			state.play = 'play';
-			reviveSlot(state.auxSlot);
-			return;
-		}
 
 		if (state.play === 'play') {
 			pauseMain();
@@ -1717,23 +1755,28 @@
 			loadMain(state.index, true);
 			return;
 		}
+
 		playMain();
 	}
 
 	function onPrev(){
 		log('action prev');
-		loadMain(nextIndex(-1, currentIndexBase()), state.play === 'play');
+		stopAux('prev');
+		resetGap('prev');
+		loadMain(nextIndex(-1, currentIndexBase()), isPlay());
 	}
 
 	function onNext(){
 		log('action next');
-		if (auxActive() && nextReady(state.nextSlot)) {
-			auxStop('onNext');
-			state.net = 'ok';
-			swapMainNext();
+		stopAux('next');
+		resetGap('next');
+
+		if (nextReady(state.nextSlot)) {
+			swapMainNext(isPlay(), false);
 			return;
 		}
-		loadMain(nextIndex(1, currentIndexBase(), state.mainIndex), state.play === 'play');
+
+		loadMain(nextIndex(1, currentIndexBase(), state.mainIndex), isPlay(), false);
 	}
 
 	function toggleMore(){
@@ -1745,7 +1788,7 @@
 	}
 
 	function toggleRepeat(){
-		state.repeat = state.repeat ? 0 : 1;
+		state.repeat = state.repeat ? 0 : 0;
 		log('toggleRepeat', state.repeat);
 		updateRoot('state');
 	}
@@ -1753,28 +1796,47 @@
 	function toggleShuffle(){
 		state.shuffle = state.shuffle ? 0 : 1;
 		log('toggleShuffle', state.shuffle);
+		if (state.nextIndex >= 0) {
+			resetSlot(state.nextSlot);
+			state.nextIndex = -1;
+		}
 		updateRoot('state');
 	}
 
 	function toggleAuxTest(){
-		const track = trackAt(state.index >= 0 ? state.index : 0);
+		const track = trackAt(state.index >= 0 ? state.index : state.mainIndex >= 0 ? state.mainIndex : 0);
 
-		if (!auxEnabled()) {
-			log('toggleAuxTest disabled');
-			return;
-		}
+		if (!auxEnabled()) return;
 
 		state.auxTest = state.auxTest ? 0 : 1;
 		log('toggleAuxTest', { auxTest: state.auxTest, track: trackInfo(track) });
+
 		if (state.auxTest) {
-			enterAux(track);
-		} else if (auxActive()) {
-			auxStop('toggleAuxTest');
-			state.net = 'ok';
-			if (nextReady(state.nextSlot)) swapMainNext();
-			else if (state.mainIndex >= 0) enterMain(trackAt(state.mainIndex), state.play === 'play');
+			resetGap('auxTest on');
+			state.aux.testing = 1;
+			state.mode = 'aux';
+			state.play = 'play';
+			commitTrackUi(track);
+			try { state.auxSlot.currentTime = 0; } catch (e) {}
+			state.auxSlot.play().then(function(){
+				log('aux test play ok', slotInfo(state.auxSlot));
+				syncPlaybackState();
+				updateRoot('all');
+			}).catch(function(err){
+				warn('aux test play failed', String(err && err.message || err));
+				state.aux.testing = 0;
+				state.auxTest = 0;
+				state.mode = 'main';
+				syncPlaybackState();
+				updateRoot('all');
+			});
+			return;
 		}
-		updateRoot('state');
+
+		stopAux('auxTest off');
+		state.mode = 'main';
+		syncPlaybackState();
+		updateRoot('all');
 	}
 
 	function toggleQuality(){
@@ -1782,6 +1844,11 @@
 		else if (state.quality === 'low') state.quality = 'hi';
 		else state.quality = 'norm';
 		log('toggleQuality', state.quality);
+		if (state.mainIndex >= 0) {
+			stopAux('quality');
+			resetGap('quality');
+			loadMain(state.mainIndex, state.play === 'play');
+		}
 		updateRoot('state');
 	}
 
@@ -1791,13 +1858,7 @@
 	}
 
 	function onProgressClick(e){
-		const rect = progressNode.getBoundingClientRect();
-		let ratio = 0;
-
-		if (!rect || !rect.width) return;
-		ratio = clamp((e.clientX - rect.left) / rect.width, 0, 1);
-		log('progress click', { x: e.clientX, left: rect.left, width: rect.width, ratio: ratio });
-		seekToRatio(ratio);
+		seekFromClientX(e.clientX, 'click');
 	}
 
 	function fullscreenElement(){
@@ -1851,7 +1912,11 @@
 			}
 			g.held = 1;
 			debug('longPress fire', { dx: dx, dy: dy });
-			setPreview('fullscreen');
+			//setPreview('fullscreen');
+			if (!isPlay()) {
+				setPreview('toggle');
+				togglePlay();
+			}
 			toggleFullscreen();
 			g.done = 1;
 		}, CFG.LONG_PRESS_MS);
@@ -1860,9 +1925,8 @@
 	function gestureAction(dx, dy, dt, x, y){
 		if (dy >= CFG.PREVIEW_SWIPE_DOWN_PX && dy > Math.abs(dx) * 1.2) return 'refresh';
 		if (Math.abs(dx) >= CFG.PREVIEW_SWIPE_PX && Math.abs(dx) > Math.abs(dy) * 1.15) return dx < 0 ? 'next' : 'prev';
-		if (Math.abs(dx) <= CFG.PREVIEW_TAP_PX && Math.abs(dy) <= CFG.PREVIEW_TAP_PX && dt <= CFG.PREVIEW_MAX_MS) {
+		if (Math.abs(dx) <= CFG.PREVIEW_TAP_PX && Math.abs(dy) <= CFG.PREVIEW_TAP_PX && dt <= CFG.PREVIEW_MAX_MS)
 			return 'toggle';
-		}
 		return '';
 	}
 
@@ -1878,7 +1942,7 @@
 	function onPointerDown(e){
 		const target = e.target && e.target.closest ? e.target.closest('button,a,[data-act="seek"]') : null;
 
-		if (target || e.isPrimary === false || state.gesture) return;
+		if (target || pointNearProgress(e.clientX, e.clientY) || e.isPrimary === false || state.gesture || state.seekDrag) return;
 		state.gesture = {
 			id: e.pointerId,
 			x: e.clientX,
@@ -1896,7 +1960,7 @@
 			}
 		}
 		if (e.cancelable) e.preventDefault();
-		setPreview('toggle');
+		//setPreview('toggle');
 		queueLongPress();
 	}
 
@@ -1906,6 +1970,7 @@
 		let dt = 0;
 		let act = '';
 
+		if (state.seekDrag) return;
 		if (!state.gesture || e.pointerId !== state.gesture.id) return;
 		state.gesture.lastX = e.clientX;
 		state.gesture.lastY = e.clientY;
@@ -1927,6 +1992,7 @@
 		let dt = 0;
 		let act = '';
 
+		if (state.seekDrag) return;
 		if (!state.gesture || e.pointerId !== state.gesture.id) return;
 		dx = e.clientX - state.gesture.x;
 		dy = e.clientY - state.gesture.y;
@@ -1947,7 +2013,7 @@
 		clearPreview();
 
 		if (act === 'toggle') {
-			togglePlay();
+			//togglePlay();
 		} else if (act === 'fullscreen') {
 			toggleFullscreen();
 		} else if (act === 'refresh') {
@@ -1959,6 +2025,7 @@
 	}
 
 	function onPointerCancel(e){
+		if (state.seekDrag) return;
 		if (!state.gesture) return;
 		if (e && state.gesture.id != null && e.pointerId !== state.gesture.id) return;
 		debug('pointer cancel', { id: state.gesture.id });
@@ -2010,6 +2077,11 @@
 		});
 
 		progressNode.addEventListener('click', onProgressClick);
+		progressNode.addEventListener('pointerdown', onProgressPointerDown);
+		progressNode.addEventListener('pointermove', onProgressPointerMove);
+		progressNode.addEventListener('pointerup', onProgressPointerUp);
+		progressNode.addEventListener('pointercancel', onProgressPointerCancel);
+		progressNode.addEventListener('lostpointercapture', onProgressPointerCancel);
 		root.addEventListener('pointerdown', onPointerDown);
 		root.addEventListener('pointermove', onPointerMove);
 		root.addEventListener('pointerup', onPointerUp);
@@ -2037,7 +2109,6 @@
 			state.net = 'ok';
 			revivePlayback();
 		});
-
 
 		function parseSeekValue(spec, duration, currentTime){
 			let s = cleanText(spec || '');
@@ -2092,7 +2163,6 @@
 		function seekTo(spec){
 			let t = 0;
 
-			if (state.mode !== 'main') return;
 			if (!state.mainSlot || !isFinite(state.mainSlot.duration) || state.mainSlot.duration <= 0) return;
 
 			t = parseSeekValue(spec, state.mainSlot.duration, state.mainSlot.currentTime);
@@ -2141,65 +2211,109 @@
 		});
 	}
 
+	function onAuxEnded(){
+		log('aux ended handler', { gap: state.gap, aux: slotInfo(state.auxSlot) });
+		state.aux.blocking = 0;
+		state.mode = 'main';
+
+		if (state.auxTest) {
+			state.aux.testing = 0;
+			state.auxTest = 0;
+			refreshStatus();
+			updateRoot('all');
+			return;
+		}
+
+		if (state.play !== 'play') {
+			refreshStatus();
+			updateRoot('all');
+			return;
+		}
+
+		if (trackIsHealthy()) {
+			markRecovered('aux ended healthy');
+			refreshStatus();
+			updateRoot('all');
+			return;
+		}
+
+		if (nextReady(state.nextSlot) && (state.mainSlot.ended || state.mainSlot.error)) {
+			resetGap('aux ended promote next');
+			swapMainNext(true, true);
+			return;
+		}
+
+		state.gap.waitCount++;
+		state.gap.notified = 1;
+		state.gap.recovered = 0;
+		state.net = 'fail';
+		setMediaGap(mediaTrack());
+		refreshStatus();
+		updateRoot('all');
+
+		if (auxEnabled())
+			playAuxBlock();
+	}
+
 	function bindAudio(el){
 		log('bindAudio', cleanText(el && el.__a3mName || ''));
+
 		el.addEventListener('canplay', function(){
 			log('audio canplay', slotInfo(el));
-			if (el === state.mainSlot) {
-				markMainMoved();
-				if (state.mode === 'main' && state.play === 'play') reviveSlot(el);
-			}
+			if (el === state.mainSlot && state.play === 'play')
+				reviveSlot(el);
 			updateRoot('all');
-			if (el === state.nextSlot) {
-				if (auxActive()) leaveAuxIfPossible();
-				else if (auxNeedPromoteNext()) {
-					log('audio canplay promote next', slotInfo(el));
-					state.net = 'ok';
-					swapMainNext();
-				}
-			}
 		});
+
 		el.addEventListener('progress', function(){
 			updateRoot('progress');
 		});
+
 		el.addEventListener('timeupdate', function(){
-			if (el === state.mainSlot) markMainMoved();
+			if (el === state.mainSlot) {
+				markMainMoved();
+				if (state.play === 'play') markRecovered('timeupdate');
+			}
 			updateRoot('progress');
 		});
+
 		el.addEventListener('waiting', function(){
 			log('audio waiting', slotInfo(el));
-			if (el === state.mainSlot && state.mode === 'main' && state.play === 'play') {
+			if (el === state.mainSlot && state.play === 'play') {
 				state.net = 'slow';
 				if (!state.mainStallAt) state.mainStallAt = Date.now();
 				updateRoot('state');
 			}
 		});
+
 		el.addEventListener('stalled', function(){
 			log('audio stalled', slotInfo(el));
-			if (el === state.mainSlot && state.mode === 'main' && state.play === 'play') {
+			if (el === state.mainSlot && state.play === 'play') {
 				state.net = 'slow';
 				if (!state.mainStallAt) state.mainStallAt = Date.now();
 				updateRoot('state');
 			}
 		});
+
 		el.addEventListener('playing', function(){
 			log('audio playing', slotInfo(el));
-			if (el === state.mainSlot) markMainMoved();
+			if (el === state.mainSlot) {
+				markMainMoved();
+				if (state.play === 'play') markRecovered('playing');
+			}
 			state.net = 'ok';
 			updateRoot('all');
 		});
+
 		el.addEventListener('ended', function(){
 			log('audio ended', slotInfo(el));
-			if (el === state.mainSlot && state.mode === 'main') onMainEnded();
-			else if (el === state.auxSlot && auxActive()) leaveAuxIfPossible();
+			if (el === state.mainSlot) onMainEnded();
+			else if (el === state.auxSlot) onAuxEnded();
 		});
+
 		el.addEventListener('error', function(){
-			const failedIndex = el === state.nextSlot ? state.nextIndex : -1;
-			const target = trackAt(state.nextIndex >= 0 ? state.nextIndex : nextIndex(1, currentIndexBase(), state.mainIndex)) || trackAt(state.index);
-
-			//warn('audio error', { slot: slotInfo(el), failedIndex: failedIndex, target: trackInfo(target) });
-
-			const err = el && el.error;
+			const failedIndex = el === state.nextSlot ? state.nextIndex : state.mainIndex;
+			const target = mediaTrack();
 
 			warn('audio error', {
 				slot: slotInfo(el),
@@ -2208,23 +2322,24 @@
 				currentSrc: cleanText(el && (el.currentSrc || el.src) || ''),
 				networkState: el ? el.networkState : -1,
 				readyState: el ? el.readyState : -1,
-				error: err ? {
-					code: err.code || 0,
-					message: cleanText(err.message || '')
+				error: el && el.error ? {
+					code: el.error.code || 0,
+					message: cleanText(el.error.message || '')
 				} : null
 			});
 
-			if (el === state.mainSlot && state.mode === 'main') {
+			if (el === state.mainSlot) {
 				if (nextReady(state.nextSlot)) {
-					state.net = 'ok';
-					swapMainNext();
+					swapMainNext(state.play === 'play', true);
 					return;
 				}
 				state.net = 'fail';
-				enterAux(target);
-				scheduleNext();
+				scheduleNext(currentIndexBase(), failedIndex);
+				armGap('Trying next source');
+				updateRoot('state');
 				return;
 			}
+
 			if (el === state.nextSlot && state.nextIndex >= 0) {
 				state.net = 'slow';
 				resetSlot(state.nextSlot);
@@ -2232,6 +2347,109 @@
 				scheduleNext(currentIndexBase(), failedIndex);
 			}
 		});
+	}
+
+	function revivePlayback(){
+		logState('revivePlayback');
+		if (!state.play !== 'play') return;
+
+		if (state.mainIndex >= 0 && state.mainSlot &&
+			(!state.mainSlot.getAttribute('src') || state.mainSlot.__a3mIndex !== state.mainIndex)) {
+			log('revivePlayback prepare main', { mainIndex: state.mainIndex });
+			prepareTrack(state.mainSlot, state.mainIndex);
+		}
+
+		reviveSlot(state.mainSlot);
+
+		if (
+			state.nextIndex < 0 &&
+			(state.net !== 'ok' || state.gap.armedAt || state.aux.blocking || state.mainSlot.ended || state.mainSlot.error)
+		) {
+			scheduleNext();
+		}
+	}
+
+	function checkWarmWindow(){
+		let left = 0;
+
+		if (state.play !== 'play') return;
+		if (!state.mainSlot || state.mainSlot.__a3mIndex !== state.mainIndex) return;
+		if (!isFinite(state.mainSlot.duration) || state.mainSlot.duration <= 0) return;
+
+		left = state.mainSlot.duration - state.mainSlot.currentTime;
+		if (left <= CFG.NEXT_WARMUP_SEC && state.nextIndex < 0) {
+			log('warmWindow', { left: round1(left), main: slotInfo(state.mainSlot) });
+			scheduleNext();
+		}
+	}
+
+	function checkPlaybackRecovery(){
+		const now = Date.now();
+		const main = state.mainSlot;
+		let pos = 0;
+		let stuckMs = 0;
+
+		if (!main || state.play !== 'play' || state.mainIndex < 0) return;
+		if (state.auxTest) return;
+
+		if (main.ended) {
+			if (nextReady(state.nextSlot) && !state.aux.blocking) {
+				log('recovery promote next after ended', { next: slotInfo(state.nextSlot) });
+				swapMainNext(true, true);
+				return;
+			}
+			armGap('Trying next source');
+			if (state.gap.armedAt && !state.aux.blocking && now - state.gap.armedAt >= CFG.GAP_ARM_MS)
+				playAuxBlock();
+			updateRoot('state');
+			return;
+		}
+
+		pos = isFinite(main.currentTime) ? main.currentTime : 0;
+		if (Math.abs(pos - state.mainLastTime) > 0.04) {
+			markMainMoved();
+			updateRoot('all');
+			return;
+		}
+
+		if (!state.mainLastMoveAt) state.mainLastMoveAt = now;
+		stuckMs = now - state.mainLastMoveAt;
+
+		if (!state.mainStallAt && (main.paused || main.readyState < CFG.NEXT_READY_STATE || stuckMs >= CFG.STALL_RESUME_MS)) {
+			state.mainStallAt = state.mainLastMoveAt || now;
+			log('recovery stall start', { stuckMs: stuckMs, main: slotInfo(main) });
+		}
+		if (!state.mainStallAt) return;
+
+		state.net = 'slow';
+
+		if (stuckMs >= CFG.STALL_RESUME_MS && now - state.mainResumeAt >= CFG.RESUME_RETRY_MS)
+			reviveSlot(main);
+
+		if (nextReady(state.nextSlot) && !state.aux.blocking) {
+			log('recovery promote next', { stuckMs: stuckMs, next: slotInfo(state.nextSlot) });
+			state.net = 'ok';
+			swapMainNext(true, true);
+			return;
+		}
+
+		armGap('Playback gap');
+		if (state.nextIndex < 0)
+			scheduleNext();
+		if (state.gap.armedAt && !state.aux.blocking && now - state.gap.armedAt >= CFG.GAP_ARM_MS)
+			playAuxBlock();
+
+		updateRoot('state');
+	}
+
+	function tickProgress(){
+		clearInterval(state.progressTimer);
+		log('progress timer start', CFG.PROGRESS_TICK_MS);
+		state.progressTimer = setInterval(function(){
+			updateRoot('progress');
+			checkWarmWindow();
+			checkPlaybackRecovery();
+		}, CFG.PROGRESS_TICK_MS);
 	}
 
 	function initMediaSession(){
@@ -2275,9 +2493,8 @@
 			['seekto', function(d){ seekToTime(d && d.seekTime); }]
 		];
 
-		for (i = 0; i < actions.length; i++) {
+		for (i = 0; i < actions.length; i++)
 			bindAction(actions[i][0], actions[i][1]);
-		}
 	}
 
 	function setFavicon(url){
@@ -2311,7 +2528,7 @@
 			queueMoreHide();
 
 		log('bootstrap start', { playlistSrc: playlistSrc, href: window.location.href });
-		state.calmArt = calmArt()
+		state.calmArt = calmArt();
 		setFavicon(faviconArt());
 
 		state.calmBlob = calmWaveBlob();
@@ -2328,7 +2545,7 @@
 		state.auxSlot = slot('aux');
 
 		state.auxSlot.src = state.calmBlob;
-		state.auxSlot.loop = true;
+		state.auxSlot.loop = false;
 		state.auxSlot.preload = 'auto';
 		state.auxSlot.load();
 		log('bootstrap aux slot seeded', slotInfo(state.auxSlot));
@@ -2356,7 +2573,7 @@
 			state.index = normalizeIndex(state.index);
 			if (state.index < 0) state.index = 0;
 
-			loadMain(state.index, state.play === 'play' || state.play === 1)
+			loadMain(state.index, state.play === 'play' || state.play === 1);
 			logState('bootstrap ready');
 		}).catch(function(err){
 			warn('bootstrap failed', String(err && err.message || err));
