@@ -357,12 +357,22 @@ a {
 	backdrop-filter: blur(10px);
 	-webkit-backdrop-filter: blur(10px);
 	box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+	cursor: pointer;
 	transition:
 		background-color 120ms ease,
 		border-color 120ms ease,
 		box-shadow 120ms ease,
 		opacity 120ms ease,
 		color 120ms ease;
+}
+
+@media (hover: hover) {
+	.a3m-main-btn:hover,
+	.a3m-mini-btn:hover,
+	.a3m-fs:hover {
+		background: rgba(255, 255, 255, 0.12);
+		border-color: var(--a3m-border-strong);
+	}
 }
 
 .a3m-main-btn,
@@ -632,6 +642,11 @@ a {
 	background: rgba(255, 255, 255, 0.10);
 	border-color: transparent;
 	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 10px 32px rgba(0, 0, 0, 0.28);
+}
+
+.a3m[data-a3m-can-prev="0"] [data-act="prev"],
+.a3m[data-a3m-can-next="0"] [data-act="next"] {
+	color: rgba(255, 255, 255, 0.22);
 }
 
 .a3m[data-a3m-toggle="active"] [data-act="toggle"] {

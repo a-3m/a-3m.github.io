@@ -75,6 +75,7 @@
 		RESUME_RETRY_MS: 1200,
 		MAIN_READY_STATE: 2,
 		NEXT_READY_STATE: 3,
+		MAIN_LOAD_GRACE_MS: 1600,
 		MORE_HIDE_MS: 4000,
 	};
 
@@ -111,6 +112,10 @@
 		progressTimer: 0,
 		statusTimer: 0,
 		longPressTimer: 0,
+		actionHoldTimer: 0,
+		actionHold: null,
+		skipClickAct: '',
+		skipClickAt: 0,
 		gesture: null,
 		seekDrag: null,
 		lastTapAt: 0,
@@ -121,10 +126,16 @@
 		mainResumeAt: 0,
 		mainLastTime: 0,
 		mainLastMoveAt: 0,
+		mainLoadAt: 0,
 		qualityNode: null,
 		session: null,
 		more: 0,
 		moreTimer: 0,
+		rt: {
+			list: [],
+			pos: -1,
+			stack: []
+		},
 		gap: {
 			armedAt: 0,
 			reason: '',
@@ -134,7 +145,8 @@
 		},
 		aux: {
 			blocking: 0,
-			testing: 0
+			testing: 0,
+			targetIndex: -1
 		},
 		...sess
 	};
@@ -169,7 +181,7 @@
 		const out = {};
 		let k = '';
 
-		state.index = state.mainIndex >= 0 ? state.mainIndex : state.index;
+		state.index = currentIndexBase() >= 0 ? currentIndexBase() : state.index;
 
 		for (k in sess)
 			out[k] = state[k];
@@ -277,6 +289,7 @@
 			shuffle: state.shuffle,
 			auxTest: state.auxTest,
 			auxBlocking: state.aux.blocking,
+			auxTargetIndex: state.aux.targetIndex,
 			gap: state.gap,
 			quality: state.quality,
 			more: state.more,
@@ -357,7 +370,195 @@
 		return index;
 	}
 
+	function shuffleArray(a){
+		let i = 0;
+		let j = 0;
+		let t = 0;
+
+		for (i = a.length - 1; i > 0; i--) {
+			j = Math.floor(Math.random() * (i + 1));
+			t = a[i];
+			a[i] = a[j];
+			a[j] = t;
+		}
+	}
+
+	function rtCopy(rt){
+		return {
+			list: rt && rt.list ? rt.list.slice() : [],
+			pos: rt && isFinite(rt.pos) ? parseInt(rt.pos, 10) : -1
+		};
+	}
+
+	function rtReset(){
+		state.rt.list = [];
+		state.rt.pos = -1;
+		state.rt.stack = [];
+	}
+
+	function rtSet(rt){
+		state.rt.list = rt && rt.list ? rt.list.slice() : [];
+		state.rt.pos = rt && isFinite(rt.pos) ? parseInt(rt.pos, 10) : -1;
+
+		if (state.rt.pos < -1 || state.rt.pos >= state.rt.list.length)
+			state.rt.pos = state.rt.list.length ? 0 : -1;
+
+		return state.rt.pos;
+	}
+
+	function rtPush(rt){
+		state.rt.stack.push(rtCopy(state.rt));
+		return rtSet(rt);
+	}
+
+	function rtPop(){
+		let index = -1;
+		let pos = -1;
+
+		if (!state.rt.stack.length) return -1;
+
+		index = rtCurrentIndex();
+		rtSet(state.rt.stack.pop());
+		pos = rtSetCurrentByIndex(index);
+
+		if (pos < 0 && state.rt.pos < 0 && state.rt.list.length)
+			state.rt.pos = 0;
+
+		return state.rt.pos;
+	}
+
+	function rtCurrentIndex(){
+		if (!state.rt.list.length || state.rt.pos < 0 || state.rt.pos >= state.rt.list.length)
+			return -1;
+
+		return normalizeIndex(state.rt.list[state.rt.pos]);
+	}
+
+	function rtFindPosByIndex(index){
+		let i = 0;
+
+		index = parseInt(index, 10);
+		if (!isFinite(index) || index < 0 || !state.rt.list.length) return -1;
+		index = normalizeIndex(index);
+
+		for (i = 0; i < state.rt.list.length; i++) {
+			if (state.rt.list[i] === index)
+				return i;
+		}
+
+		return -1;
+	}
+
+	function rtSetCurrentByIndex(index){
+		const pos = rtFindPosByIndex(index);
+
+		if (pos < 0) return -1;
+		state.rt.pos = pos;
+		return pos;
+	}
+
+	function rtHasNext(){
+		return !!(state.rt.list.length && state.rt.pos >= 0 && state.rt.pos + 1 < state.rt.list.length);
+	}
+
+	function rtHasPrev(){
+		return !!(state.rt.list.length && state.rt.pos > 0 && state.rt.pos < state.rt.list.length);
+	}
+
+	function rtNextIndex(){
+		if (!rtHasNext()) return -1;
+		return normalizeIndex(state.rt.list[state.rt.pos + 1]);
+	}
+
+	function rtPrevIndex(){
+		if (!rtHasPrev()) return -1;
+		return normalizeIndex(state.rt.list[state.rt.pos - 1]);
+	}
+
+	function rtFirstIndex(){
+		if (!state.rt.list.length) return -1;
+		return normalizeIndex(state.rt.list[0]);
+	}
+
+	function rtLastIndex(){
+		if (!state.rt.list.length) return -1;
+		return normalizeIndex(state.rt.list[state.rt.list.length - 1]);
+	}
+
+	function rtBuild(index){
+		const list = [];
+		const others = [];
+		let i = 0;
+
+		index = parseInt(index, 10);
+		if (!state.list.length) return { list: [], pos: -1 };
+		if (!isFinite(index) || index < 0) index = -1;
+		else index = normalizeIndex(index);
+
+		if (state.shuffle) {
+			for (i = 0; i < state.list.length; i++) {
+				if (i === index) continue;
+				others.push(i);
+			}
+
+			shuffleArray(others);
+
+			if (index >= 0) list.push(index);
+			for (i = 0; i < others.length; i++)
+				list.push(others[i]);
+
+			return {
+				list: list,
+				pos: list.length ? 0 : -1
+			};
+		}
+
+		for (i = 0; i < state.list.length; i++)
+			list.push(i);
+
+		return {
+			list: list,
+			pos: index >= 0 ? index : (list.length ? 0 : -1)
+		};
+	}
+
+	function rtRebuild(index){
+		return rtSet(rtBuild(index));
+	}
+
+	function rtIndexStep(step, fromIndex, skipIndex){
+		const list = state.rt.list;
+		let pos = -1;
+		let idx = -1;
+
+		step = step < 0 ? -1 : 1;
+		fromIndex = fromIndex == null ? rtCurrentIndex() : parseInt(fromIndex, 10);
+		if (!list.length) return -1;
+
+		if (isFinite(fromIndex) && fromIndex >= 0)
+			pos = rtFindPosByIndex(fromIndex);
+		else
+			pos = state.rt.pos;
+
+		if (pos < 0)
+			pos = step > 0 ? -1 : list.length;
+
+		skipIndex = parseInt(skipIndex, 10);
+		if (!isFinite(skipIndex) || skipIndex < 0) skipIndex = -1;
+		else skipIndex = normalizeIndex(skipIndex);
+
+		while (1) {
+			pos += step;
+			if (pos < 0 || pos >= list.length) return -1;
+			idx = normalizeIndex(list[pos]);
+			if (idx !== skipIndex) return idx;
+		}
+	}
+
 	function currentIndexBase(){
+		const index = rtCurrentIndex();
+
+		if (index >= 0) return index;
 		if (state.mainIndex >= 0) return state.mainIndex;
 		if (state.index >= 0) return state.index;
 		return 0;
@@ -599,7 +800,8 @@
 		let i = 0;
 
 		function looksWrappedUrl(s){
-			return /^https?:\/\//i.test(s) && !/(\.(?:opus|ogg|mp3|m4a|aac|wav|flac|oga|webp|jpg|jpeg|png|gif|avif))(?:[?#].*)?$/i.test(s);
+			return /^https?:\/\//i.test(s) &&
+				!/(\.(?:opus|ogg|mp3|m4a|aac|wav|flac|oga|webp|jpg|jpeg|png|gif|avif))(?:[?#].*)?$/i.test(s);
 		}
 
 		for (i = 0; i < lines.length; i++) {
@@ -1031,7 +1233,7 @@
 			setStatus(gapDetail(), 'error');
 			return;
 		}
-		if (state.play === 'play' && state.nextIndex >= 0) {
+		if (isPlay() && state.nextIndex >= 0) {
 			setStatus('Preparing next track', '', 0);
 			return;
 		}
@@ -1070,9 +1272,9 @@
 	}
 
 	function mediaTrack(){
-		if (state.mainIndex >= 0) return trackAt(state.mainIndex);
-		if (state.index >= 0) return trackAt(state.index);
-		return null;
+		const index = state.mainIndex >= 0 ? state.mainIndex : currentIndexBase();
+
+		return index >= 0 ? trackAt(index) : null;
 	}
 
 	function setMediaTrack(track){
@@ -1125,7 +1327,7 @@
 	function syncPlaybackState(){
 		if (!('mediaSession' in navigator)) return;
 		try {
-			navigator.mediaSession.playbackState = state.play === 'play' ? 'playing' : 'paused';
+			navigator.mediaSession.playbackState = isPlay() ? 'playing' : 'paused';
 			debug('media playbackState', state.play);
 		} catch (e) {
 			warn('media playbackState failed', String(e && e.message || e));
@@ -1145,6 +1347,30 @@
 		return slotReady(el, state.nextIndex, CFG.NEXT_READY_STATE);
 	}
 
+	function clearMainLoad(reason){
+		if (!state.mainLoadAt) return;
+		debug('main load clear', { reason: reason, mainIndex: state.mainIndex });
+		state.mainLoadAt = 0;
+	}
+
+	function startMainLoad(index){
+		state.mainLoadAt = Date.now();
+		debug('main load start', { index: index, graceMs: CFG.MAIN_LOAD_GRACE_MS });
+	}
+
+	function mainLoadGraceActive(now){
+		now = now || Date.now();
+
+		return !!(
+			state.mainLoadAt &&
+			state.mainIndex >= 0 &&
+			state.mainSlot &&
+			state.mainSlot.__a3mIndex === state.mainIndex &&
+			!state.mainSlot.error &&
+			now - state.mainLoadAt < CFG.MAIN_LOAD_GRACE_MS
+		);
+	}
+
 	function clearMainStall(){
 		if (state.mainStallAt || state.mainResumeAt)
 			log('stall clear', { stallAt: state.mainStallAt, resumeAt: state.mainResumeAt });
@@ -1153,15 +1379,16 @@
 	}
 
 	function markMainMoved(){
+		clearMainLoad('main moved');
 		state.mainLastTime = state.mainSlot && isFinite(state.mainSlot.currentTime) ? state.mainSlot.currentTime : 0;
 		state.mainLastMoveAt = Date.now();
 		clearMainStall();
-		if (state.play === 'play') state.net = 'ok';
+		if (isPlay()) state.net = 'ok';
 		debug('main moved', { time: round1(state.mainLastTime), movedAt: state.mainLastMoveAt });
 	}
 
 	function reviveSlot(el){
-		if (!el || state.play !== 'play') return;
+		if (!el || !isPlay()) return;
 		log('slot revive', slotInfo(el));
 		try {
 			state.mainResumeAt = Date.now();
@@ -1191,6 +1418,83 @@
 		return state.play === 'play'
 	}
 
+	function clearAuxTarget(reason){
+		if (state.aux.targetIndex < 0) return;
+		log('aux target clear', { reason: reason, targetIndex: state.aux.targetIndex });
+		state.aux.targetIndex = -1;
+	}
+
+	function stageAuxTarget(index, reason){
+		index = parseInt(index, 10);
+		if (!isFinite(index) || index < 0) return -1;
+		index = normalizeIndex(index);
+
+		if (index === state.mainIndex) {
+			clearAuxTarget(reason);
+			if (state.nextIndex >= 0 && state.nextIndex !== state.mainIndex) {
+				resetSlot(state.nextSlot);
+				state.nextIndex = -1;
+			}
+			rtSetCurrentByIndex(state.mainIndex);
+			state.index = state.mainIndex;
+			log('aux target cancel', { reason: reason, index: index });
+			updateRoot('state');
+			return index;
+		}
+
+		if (index === state.aux.targetIndex && state.nextIndex === index) {
+			log('aux target keep', { reason: reason, index: index, ready: nextReady(state.nextSlot) ? 1 : 0 });
+			return index;
+		}
+
+		state.aux.targetIndex = index;
+		rtSetCurrentByIndex(index);
+		state.index = index;
+		state.nextIndex = index;
+		log('aux target stage', { reason: reason, index: index, track: trackInfo(trackAt(index)) });
+		prepareTrack(state.nextSlot, index);
+		updateRoot('state');
+		return index;
+	}
+
+	function runNav(index, reason, forceNext, preferSwap){
+		const current = currentIndexBase();
+
+		index = parseInt(index, 10);
+		if (!isFinite(index) || index < 0) {
+			log('action ' + reason + ' ignored', { index: index, pos: state.rt.pos, total: state.rt.list.length });
+			return;
+		}
+		index = normalizeIndex(index);
+
+		if (state.aux.blocking) {
+			stageAuxTarget(index, reason);
+			return;
+		}
+
+		if (index === current) {
+			log('action ' + reason + ' ignored', { index: index, current: current });
+			return;
+		}
+
+		if (state.aux.testing)
+			stopAux(reason);
+
+		resetGap(reason);
+
+		if (preferSwap && nextReady(state.nextSlot) && state.nextIndex === index) {
+			swapMainNext(isPlay(), false);
+			return;
+		}
+
+		loadMain(index, isPlay(), !!forceNext);
+	}
+
+	function nextOwnedTargetIndex(){
+		if (!state.aux.blocking || state.aux.targetIndex < 0) return -1;
+		return normalizeIndex(state.aux.targetIndex);
+	}
+
 	function playAuxBlock(){
 		if (!auxEnabled() || !isPlay() || state.aux.blocking || state.aux.testing) return;
 		if (!state.auxSlot) return;
@@ -1198,7 +1502,7 @@
 		state.aux.blocking = 1;
 		state.mode = 'aux';
 		state.net = 'fail';
-		log('aux block start', { gap: state.gap, aux: slotInfo(state.auxSlot) });
+		log('aux block start', { gap: state.gap, aux: slotInfo(state.auxSlot), targetIndex: state.aux.targetIndex });
 
 		try { state.auxSlot.currentTime = 0; } catch (e) {
 			warn('aux currentTime reset failed', String(e && e.message || e));
@@ -1225,6 +1529,7 @@
 		stopSlot(state.auxSlot);
 		state.aux.blocking = 0;
 		state.aux.testing = 0;
+		clearAuxTarget(reason);
 		if (!state.auxTest) state.mode = 'main';
 	}
 
@@ -1239,7 +1544,7 @@
 	}
 
 	function armGap(reason){
-		if (!auxEnabled() || state.play !== 'play' || state.auxTest) return;
+		if (!auxEnabled() || !isPlay() || state.auxTest) return;
 		if (state.gap.armedAt) return;
 		state.gap.armedAt = Date.now();
 		state.gap.reason = cleanText(reason || 'Playback gap');
@@ -1261,13 +1566,14 @@
 		state.gap.notified = 0;
 		state.gap.recovered = 1;
 		state.net = 'ok';
+		clearAuxTarget(reason);
 		if (track) setMediaTrack(track);
 		refreshStatus();
 		updateRoot('all');
 	}
 
 	function trackIsHealthy(){
-		if (state.play !== 'play') return false;
+		if (!isPlay()) return false;
 		if (!state.mainSlot || state.mainIndex < 0) return false;
 		if (state.mainSlot.ended || state.mainSlot.error) return false;
 		if (state.mainLastMoveAt && Date.now() - state.mainLastMoveAt <= CFG.STALL_RESUME_MS) return true;
@@ -1292,20 +1598,20 @@
 		if (state.preview === 'toggle') return 'pressed';
 		if (auxActive() || root.getAttribute('data-a3m-status') === 'error' || state.net === 'fail') return 'fail';
 		if (state.mainIndex >= 0 && !mainReady(state.mainSlot)) return 'preload';
-		if (state.play === 'play') return 'active';
+		if (isPlay()) return 'active';
 		return '';
 	}
 
 	function updateRootState(){
 		const main = state.mainSlot;
 		const next = state.nextSlot;
-		const total = state.list.length;
-		const idx = total > 0 && (state.mainIndex >= 0 || state.index >= 0) ? (currentIndexBase() + 1) : 0;
+		const total = state.rt.list.length || state.list.length;
+		const idx = total > 0 && state.rt.pos >= 0 ? (state.rt.pos + 1) : 0;
 		const q = 'quality ' + state.quality;
 
 		setData('play', state.play);
 		setData('mode', auxActive() ? 'aux' : 'main');
-		setData('main', mainReady(main) ? (state.play === 'play' ? 'playing' : 'paused') : 'idle');
+		setData('main', mainReady(main) ? (isPlay() ? 'playing' : 'paused') : 'idle');
 		setData('next', nextReady(next) ? 'ready' : (next && next.getAttribute('src') ? 'warming' : 'idle'));
 		setData('aux', auxActive() ? 'playing' : 'idle');
 		setData('more', state.more);
@@ -1317,6 +1623,8 @@
 		setData('fullscreen', fullscreenElement() ? 1 : 0);
 		setData('net', state.net);
 		setData('toggle', getToggleState());
+		setData('can-prev', rtHasPrev() ? 1 : 0);
+		setData('can-next', rtHasNext() ? 1 : 0);
 
 		setVar('--a3m-quality', '"' + qualityText() + '"');
 		setVar('--a3m-track-idx', cssText(idx));
@@ -1436,9 +1744,26 @@
 	}
 
 	function scheduleNext(fromIndex, skipIndex){
-		const index = nextIndex(1, fromIndex, skipIndex);
+		let index = nextOwnedTargetIndex();
+		let skip = parseInt(skipIndex, 10);
+		const owner = index >= 0 ? 'aux' : 'warm';
 
-		log('scheduleNext', { fromIndex: fromIndex, skipIndex: skipIndex, next: index });
+		if (!isFinite(skip) || skip < 0) skip = -1;
+		else skip = normalizeIndex(skip);
+
+		if (index >= 0 && (index === state.mainIndex || index === skip))
+			index = -1;
+
+		if (index < 0)
+			index = rtIndexStep(1, fromIndex, skip);
+
+		log('scheduleNext', {
+			fromIndex: fromIndex,
+			skipIndex: skipIndex,
+			next: index,
+			targetIndex: state.aux.targetIndex,
+			owner: owner
+		});
 		if (index < 0 || index === state.mainIndex) {
 			state.nextIndex = -1;
 			resetSlot(state.nextSlot);
@@ -1489,12 +1814,18 @@
 		log('loadMain', { index: index, autoplay: !!autoplay, forceNext: !!forceNext, track: trackInfo(track) });
 		if (index < 0 || !track) return;
 
+		clearAuxTarget('loadMain');
+
+		if (rtSetCurrentByIndex(index) < 0)
+			rtRebuild(index);
+
 		state.index = index;
 		state.mainIndex = index;
 		state.nextIndex = -1;
 		resetSlot(state.nextSlot);
-		prepareTrack(state.mainSlot, index);
 		clearMainStall();
+		startMainLoad(index);
+		prepareTrack(state.mainSlot, index);
 		state.mainLastTime = 0;
 		state.mainLastMoveAt = 0;
 		commitTrackUi(track);
@@ -1514,6 +1845,7 @@
 				slot: slotInfo(state.mainSlot)
 			});
 			if (state.mainIndex !== index) return;
+			clearMainLoad('loadMain canplay');
 			enterMain(track, autoplay);
 			if (forceNext) scheduleNext();
 		});
@@ -1528,11 +1860,13 @@
 		if (!nextReady(state.nextSlot)) return;
 
 		logState('swapMainNext before', { autoplay: !!autoplay, forceNext: !!forceNext });
+		clearAuxTarget('swapMainNext');
 		state.mainSlot = state.nextSlot;
 		state.mainIndex = state.nextIndex;
 		state.nextSlot = oldMain;
 		state.nextIndex = -1;
 
+		rtSetCurrentByIndex(state.mainIndex);
 		markMainMoved();
 		stopSlot(state.nextSlot);
 		resetSlot(state.nextSlot);
@@ -1548,22 +1882,23 @@
 	}
 
 	function beginCurrent(){
-		const track = trackAt(state.index);
+		const index = currentIndexBase();
+		const track = trackAt(index);
 
 		log('beginCurrent', trackInfo(track));
 		if (!track) return;
-		if (state.mainSlot && state.mainSlot.__a3mIndex === state.index && !auxActive()) {
+		if (state.mainSlot && state.mainSlot.__a3mIndex === index && !auxActive()) {
 			try { state.mainSlot.currentTime = 0; } catch (e) {
 				warn('beginCurrent currentTime reset failed', String(e && e.message || e));
 			}
 			markMainMoved();
-			if (state.play !== 'play') playMain();
+			if (!isPlay()) playMain();
 			return;
 		}
 
 		stopAux('beginCurrent');
 		resetGap('beginCurrent');
-		loadMain(state.index, state.play === 'play');
+		loadMain(index, isPlay());
 	}
 
 	function stopAll(hard){
@@ -1572,6 +1907,7 @@
 		stopSlot(state.nextSlot);
 		stopAux('stopAll');
 		clearMainStall();
+		clearMainLoad('stopAll');
 		resetGap('stopAll');
 
 		if (hard) {
@@ -1599,7 +1935,7 @@
 	}
 
 	function playMain(){
-		const track = trackAt(state.mainIndex >= 0 ? state.mainIndex : state.index);
+		const track = trackAt(state.mainIndex >= 0 ? state.mainIndex : currentIndexBase());
 
 		log('playMain', trackInfo(track));
 		if (!track) return;
@@ -1627,8 +1963,10 @@
 		stopSlot(state.auxSlot);
 		state.aux.blocking = 0;
 		state.aux.testing = 0;
+		clearAuxTarget('pauseMain');
 		state.mode = 'main';
 		clearMainStall();
+		clearMainLoad('pauseMain');
 		state.play = 'pause';
 		syncPlaybackState();
 		updateRoot('all');
@@ -1743,6 +2081,129 @@
 		releaseSeekDrag();
 	}
 
+	function setSkipClickAct(act){
+		state.skipClickAct = cleanText(act || '');
+		state.skipClickAt = Date.now();
+	}
+
+	function consumeSkipClickAct(act){
+		act = cleanText(act || '');
+
+		if (!act || state.skipClickAct !== act) return 0;
+		if (Date.now() - state.skipClickAt > CFG.LONG_PRESS_MS * 4) {
+			state.skipClickAct = '';
+			state.skipClickAt = 0;
+			return 0;
+		}
+
+		state.skipClickAct = '';
+		state.skipClickAt = 0;
+		return 1;
+	}
+
+	function clearActionHoldTimer(){
+		if (state.actionHoldTimer) clearTimeout(state.actionHoldTimer);
+		state.actionHoldTimer = 0;
+	}
+
+	function releaseActionHoldCapture(){
+		const hold = state.actionHold;
+		const el = hold && hold.el;
+
+		if (!hold || !el || !el.releasePointerCapture || hold.id == null) return;
+		try { el.releasePointerCapture(hold.id); } catch (e) {
+			warn('action hold release capture failed', String(e && e.message || e));
+		}
+	}
+
+	function clearActionHold(){
+		clearActionHoldTimer();
+		releaseActionHoldCapture();
+		state.actionHold = null;
+	}
+
+	function queueActionHold(act, el, e){
+		clearActionHold();
+		state.actionHold = {
+			id: e.pointerId,
+			act: act,
+			el: el,
+			x: e.clientX,
+			y: e.clientY,
+			lastX: e.clientX,
+			lastY: e.clientY,
+			fired: 0
+		};
+
+		if (el.setPointerCapture) {
+			try { el.setPointerCapture(e.pointerId); } catch (e2) {
+				warn('action hold capture failed', String(e2 && e2.message || e2));
+			}
+		}
+
+		log('action hold queue', act);
+		state.actionHoldTimer = setTimeout(function(){
+			const hold = state.actionHold;
+
+			state.actionHoldTimer = 0;
+			if (!hold || hold.fired || hold.act !== act) return;
+
+			hold.fired = 1;
+			setSkipClickAct(act);
+			log('action hold fire', act);
+
+			if (act === 'prev') onPrevLong();
+			else if (act === 'next') onNextLong();
+		}, CFG.LONG_PRESS_MS);
+	}
+
+	function onActionPointerDown(e){
+		const el = e.target && e.target.closest ? e.target.closest('[data-act="prev"],[data-act="next"]') : null;
+		const act = cleanText(el && el.getAttribute('data-act') || '');
+
+		if (!act || e.isPrimary === false || state.actionHold || state.seekDrag) return;
+		queueActionHold(act, el, e);
+	}
+
+	function onActionPointerMove(e){
+		const hold = state.actionHold;
+		let dx = 0;
+		let dy = 0;
+
+		if (!hold || e.pointerId !== hold.id) return;
+		hold.lastX = e.clientX;
+		hold.lastY = e.clientY;
+		if (hold.fired) return;
+
+		dx = Math.abs(hold.lastX - hold.x);
+		dy = Math.abs(hold.lastY - hold.y);
+
+		if (dx <= CFG.LONG_PRESS_MOVE_PX && dy <= CFG.LONG_PRESS_MOVE_PX) return;
+		log('action hold cancel move', { act: hold.act, dx: dx, dy: dy });
+		clearActionHold();
+	}
+
+	function onActionPointerUp(e){
+		const hold = state.actionHold;
+
+		if (!hold || e.pointerId !== hold.id) return;
+		if (hold.fired) {
+			log('action hold done', hold.act);
+			if (e.stopPropagation) e.stopPropagation();
+			if (e.cancelable) e.preventDefault();
+		}
+		clearActionHold();
+	}
+
+	function onActionPointerCancel(e){
+		const hold = state.actionHold;
+
+		if (!hold) return;
+		if (e && hold.id != null && e.pointerId !== hold.id) return;
+		log('action hold cancel', hold.act);
+		clearActionHold();
+	}
+
 	function togglePlay(){
 		logState('togglePlay');
 
@@ -1751,8 +2212,8 @@
 			return;
 		}
 
-		if (state.mainIndex < 0 && state.index >= 0) {
-			loadMain(state.index, true);
+		if (state.mainIndex < 0 && currentIndexBase() >= 0) {
+			loadMain(currentIndexBase(), true);
 			return;
 		}
 
@@ -1760,23 +2221,31 @@
 	}
 
 	function onPrev(){
+		const index = rtPrevIndex();
+
 		log('action prev');
-		stopAux('prev');
-		resetGap('prev');
-		loadMain(nextIndex(-1, currentIndexBase()), isPlay());
+		runNav(index, 'prev', false, false);
 	}
 
 	function onNext(){
+		const index = rtNextIndex();
+
 		log('action next');
-		stopAux('next');
-		resetGap('next');
+		runNav(index, 'next', false, true);
+	}
 
-		if (nextReady(state.nextSlot)) {
-			swapMainNext(isPlay(), false);
-			return;
-		}
+	function onPrevLong(){
+		const index = rtFirstIndex();
 
-		loadMain(nextIndex(1, currentIndexBase(), state.mainIndex), isPlay(), false);
+		log('action prev long');
+		runNav(index, 'prev-long', false, false);
+	}
+
+	function onNextLong(){
+		const index = rtLastIndex();
+
+		log('action next long');
+		runNav(index, 'next-long', false, false);
 	}
 
 	function toggleMore(){
@@ -1794,8 +2263,13 @@
 	}
 
 	function toggleShuffle(){
+		const index = currentIndexBase();
+
 		state.shuffle = state.shuffle ? 0 : 1;
 		log('toggleShuffle', state.shuffle);
+		rtRebuild(index);
+		if (rtCurrentIndex() >= 0)
+			state.index = rtCurrentIndex();
 		if (state.nextIndex >= 0) {
 			resetSlot(state.nextSlot);
 			state.nextIndex = -1;
@@ -1804,7 +2278,7 @@
 	}
 
 	function toggleAuxTest(){
-		const track = trackAt(state.index >= 0 ? state.index : state.mainIndex >= 0 ? state.mainIndex : 0);
+		const track = trackAt(currentIndexBase());
 
 		if (!auxEnabled()) return;
 
@@ -1847,7 +2321,7 @@
 		if (state.mainIndex >= 0) {
 			stopAux('quality');
 			resetGap('quality');
-			loadMain(state.mainIndex, state.play === 'play');
+			loadMain(state.mainIndex, isPlay());
 		}
 		updateRoot('state');
 	}
@@ -2062,6 +2536,13 @@
 			log('action click', act);
 			if (act !== 'download') e.preventDefault();
 
+			if ((act === 'prev' || act === 'next') && consumeSkipClickAct(act)) {
+				log('action click skip long', act);
+				return;
+			}
+			if (act === 'prev' || act === 'next')
+				log('action short', act);
+
 			if (act === 'toggle') togglePlay();
 			else if (act === 'prev') onPrev();
 			else if (act === 'next') onNext();
@@ -2082,6 +2563,11 @@
 		progressNode.addEventListener('pointerup', onProgressPointerUp);
 		progressNode.addEventListener('pointercancel', onProgressPointerCancel);
 		progressNode.addEventListener('lostpointercapture', onProgressPointerCancel);
+		root.addEventListener('pointerdown', onActionPointerDown);
+		root.addEventListener('pointermove', onActionPointerMove);
+		root.addEventListener('pointerup', onActionPointerUp);
+		root.addEventListener('pointercancel', onActionPointerCancel);
+		root.addEventListener('lostpointercapture', onActionPointerCancel);
 		root.addEventListener('pointerdown', onPointerDown);
 		root.addEventListener('pointermove', onPointerMove);
 		root.addEventListener('pointerup', onPointerUp);
@@ -2212,7 +2698,22 @@
 	}
 
 	function onAuxEnded(){
-		log('aux ended handler', { gap: state.gap, aux: slotInfo(state.auxSlot) });
+		const targetIndex = parseInt(state.aux.targetIndex, 10);
+		const targetReady = (
+			isFinite(targetIndex) &&
+			targetIndex >= 0 &&
+			state.nextIndex === normalizeIndex(targetIndex) &&
+			nextReady(state.nextSlot)
+		);
+		const warmReady = !targetReady && nextReady(state.nextSlot);
+
+		log('aux ended handler', {
+			gap: state.gap,
+			aux: slotInfo(state.auxSlot),
+			targetIndex: targetIndex,
+			targetReady: targetReady ? 1 : 0,
+			warmReady: warmReady ? 1 : 0
+		});
 		state.aux.blocking = 0;
 		state.mode = 'main';
 
@@ -2224,9 +2725,22 @@
 			return;
 		}
 
-		if (state.play !== 'play') {
+		if (!isPlay()) {
+			clearAuxTarget('aux ended not playing');
 			refreshStatus();
 			updateRoot('all');
+			return;
+		}
+
+		if (targetReady) {
+			resetGap('aux ended target ready');
+			swapMainNext(true, true);
+			return;
+		}
+
+		if (warmReady) {
+			resetGap('aux ended promote next');
+			swapMainNext(true, true);
 			return;
 		}
 
@@ -2234,12 +2748,6 @@
 			markRecovered('aux ended healthy');
 			refreshStatus();
 			updateRoot('all');
-			return;
-		}
-
-		if (nextReady(state.nextSlot) && (state.mainSlot.ended || state.mainSlot.error)) {
-			resetGap('aux ended promote next');
-			swapMainNext(true, true);
 			return;
 		}
 
@@ -2260,8 +2768,10 @@
 
 		el.addEventListener('canplay', function(){
 			log('audio canplay', slotInfo(el));
-			if (el === state.mainSlot && state.play === 'play')
-				reviveSlot(el);
+			if (el === state.mainSlot) {
+				clearMainLoad('audio canplay');
+				if (isPlay()) reviveSlot(el);
+			}
 			updateRoot('all');
 		});
 
@@ -2272,14 +2782,14 @@
 		el.addEventListener('timeupdate', function(){
 			if (el === state.mainSlot) {
 				markMainMoved();
-				if (state.play === 'play') markRecovered('timeupdate');
+				if (isPlay()) markRecovered('timeupdate');
 			}
 			updateRoot('progress');
 		});
 
 		el.addEventListener('waiting', function(){
 			log('audio waiting', slotInfo(el));
-			if (el === state.mainSlot && state.play === 'play') {
+			if (el === state.mainSlot && isPlay()) {
 				state.net = 'slow';
 				if (!state.mainStallAt) state.mainStallAt = Date.now();
 				updateRoot('state');
@@ -2288,7 +2798,7 @@
 
 		el.addEventListener('stalled', function(){
 			log('audio stalled', slotInfo(el));
-			if (el === state.mainSlot && state.play === 'play') {
+			if (el === state.mainSlot && isPlay()) {
 				state.net = 'slow';
 				if (!state.mainStallAt) state.mainStallAt = Date.now();
 				updateRoot('state');
@@ -2298,8 +2808,9 @@
 		el.addEventListener('playing', function(){
 			log('audio playing', slotInfo(el));
 			if (el === state.mainSlot) {
+				clearMainLoad('audio playing');
 				markMainMoved();
-				if (state.play === 'play') markRecovered('playing');
+				if (isPlay()) markRecovered('playing');
 			}
 			state.net = 'ok';
 			updateRoot('all');
@@ -2330,7 +2841,7 @@
 
 			if (el === state.mainSlot) {
 				if (nextReady(state.nextSlot)) {
-					swapMainNext(state.play === 'play', true);
+					swapMainNext(isPlay(), true);
 					return;
 				}
 				state.net = 'fail';
@@ -2351,7 +2862,7 @@
 
 	function revivePlayback(){
 		logState('revivePlayback');
-		if (!state.play !== 'play') return;
+		if (!isPlay()) return;
 
 		if (state.mainIndex >= 0 && state.mainSlot &&
 			(!state.mainSlot.getAttribute('src') || state.mainSlot.__a3mIndex !== state.mainIndex)) {
@@ -2372,7 +2883,7 @@
 	function checkWarmWindow(){
 		let left = 0;
 
-		if (state.play !== 'play') return;
+		if (!isPlay()) return;
 		if (!state.mainSlot || state.mainSlot.__a3mIndex !== state.mainIndex) return;
 		if (!isFinite(state.mainSlot.duration) || state.mainSlot.duration <= 0) return;
 
@@ -2389,8 +2900,12 @@
 		let pos = 0;
 		let stuckMs = 0;
 
-		if (!main || state.play !== 'play' || state.mainIndex < 0) return;
+		if (!main || !isPlay() || state.mainIndex < 0) return;
 		if (state.auxTest) return;
+		if (mainLoadGraceActive(now)) {
+			debug('recovery skip fresh load', { graceMs: now - state.mainLoadAt, main: slotInfo(main) });
+			return;
+		}
 
 		if (main.ended) {
 			if (nextReady(state.nextSlot) && !state.aux.blocking) {
@@ -2519,6 +3034,13 @@
 		return 'data:image/svg+xml,' + encodeURIComponent(svg);
 	}
 
+	function normalizePlayState(){
+		if (state.play === 1) state.play = 'play';
+		else if (state.play === 0) state.play = 'pause';
+		else if (state.play !== 'play' && state.play !== 'pause' && state.play !== 'stop')
+			state.play = 'pause';
+	}
+
 	function bootstrap(){
 		let quality = '';
 
@@ -2572,8 +3094,12 @@
 
 			state.index = normalizeIndex(state.index);
 			if (state.index < 0) state.index = 0;
-
-			loadMain(state.index, state.play === 'play' || state.play === 1);
+			normalizePlayState();
+			rtReset();
+			rtRebuild(state.index);
+			if (currentIndexBase() >= 0)
+				state.index = currentIndexBase();
+			loadMain(currentIndexBase(), isPlay());
 			logState('bootstrap ready');
 		}).catch(function(err){
 			warn('bootstrap failed', String(err && err.message || err));
