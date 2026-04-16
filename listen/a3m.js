@@ -69,6 +69,10 @@
 		LONG_PRESS_MS: 480,
 		LONG_PRESS_MOVE_PX: 14,
 		PROGRESS_GUARD_PX: 18,
+		SEEK_PREVIEW_MOVE_PX: 8,
+		SEEK_CANCEL_Y_PX: 18,
+		SEEK_WAIT_Y_PX: 24,
+		SEEK_IDLE_COMMIT_MS: 500,
 		PROGRESS_TICK_MS: 180,
 		STATUS_MS: 1800,
 		STALL_RESUME_MS: 1400,
@@ -628,6 +632,140 @@
 		text = String(text == null ? '' : text);
 		if (node.textContent === text) return;
 		node.textContent = text;
+	}
+
+	function clearSeekPreview(){
+		setVar('--a3m-seek-from', '0');
+		setVar('--a3m-seek-to', '0');
+		setVar('--a3m-seek-left', '0');
+		setVar('--a3m-seek-size', '0');
+		setVar('--a3m-seek-delta', cssText(''));
+		setVar('--a3m-seek-time', cssText(''));
+		setVar('--a3m-seek-active', '0');
+		setVar('--a3m-seek-wait', '0');
+		setVar('--a3m-seek-cancel', '0');
+	}
+
+	function clearSeekIdleTimer(){
+		const drag = state.seekDrag;
+
+		if (!drag || !drag.idleTimer) return;
+		clearTimeout(drag.idleTimer);
+		drag.idleTimer = 0;
+	}
+
+	function seekRatioFromClientX(clientX){
+		const rect = progressNode.getBoundingClientRect();
+
+		if (!rect || !rect.width) return 0;
+		return clamp((clientX - rect.left) / rect.width, 0, 1);
+	}
+
+	function seekZoneFromClientY(clientY){
+		const rect = progressNode.getBoundingClientRect();
+
+		if (!rect || !rect.width) return 'active';
+		if (clientY < rect.top - CFG.SEEK_CANCEL_Y_PX) return 'cancel';
+		if (clientY > rect.bottom + CFG.SEEK_WAIT_Y_PX) return 'wait';
+		return 'active';
+	}
+
+	function formatSeekDelta(sec){
+		const sign = sec < 0 ? '-' : '+';
+
+		sec = Math.abs(Math.round(sec));
+		if (sec < 60) return sign + String(sec).padStart(2, '0');
+		return sign + formatClock(sec);
+	}
+
+	function setSeekPreviewVars(fromRatio, toRatio, deltaText, timeText, zone){
+		const left = Math.min(fromRatio, toRatio);
+		const size = Math.abs(toRatio - fromRatio);
+
+		setVar('--a3m-seek-from', String(round1(fromRatio * 100)));
+		setVar('--a3m-seek-to', String(round1(toRatio * 100)));
+		setVar('--a3m-seek-left', String(round1(left * 100)));
+		setVar('--a3m-seek-size', String(round1(size * 100)));
+		setVar('--a3m-seek-delta', cssText(deltaText));
+		setVar('--a3m-seek-time', cssText(timeText));
+		setVar('--a3m-seek-active', '1');
+		setVar('--a3m-seek-wait', zone === 'wait' ? '1' : '0');
+		setVar('--a3m-seek-cancel', zone === 'cancel' ? '1' : '0');
+	}
+
+	function commitSeekPreview(reason){
+		const drag = state.seekDrag;
+		const duration = state.mainSlot && isFinite(state.mainSlot.duration) ? state.mainSlot.duration : 0;
+		let time = 0;
+		let ratio = 0;
+
+		if (!drag || drag.zone !== 'active' || !duration) return 0;
+
+		time = clamp(drag.previewTime, 0, duration);
+		ratio = clamp(drag.previewRatio, 0, 1);
+
+		if (isFinite(drag.lastCommitTime) && Math.abs(drag.lastCommitTime - time) < 0.05) return 0;
+
+		log('seek preview commit', {
+			reason: cleanText(reason || ''),
+			time: round1(time),
+			ratio: round1(ratio)
+		});
+
+		seekToTime(time);
+
+		drag.lastCommitTime = time;
+		drag.fromTime = time;
+		drag.fromRatio = ratio;
+		drag.previewTime = time;
+		drag.previewRatio = ratio;
+
+		setSeekPreviewVars(ratio, ratio, formatSeekDelta(0), formatClock(time), drag.zone);
+		return 1;
+	}
+
+	function queueSeekIdleCommit(){
+		const drag = state.seekDrag;
+
+		clearSeekIdleTimer();
+		if (!drag || drag.zone !== 'active') return;
+
+		drag.idleTimer = setTimeout(function(){
+			if (!state.seekDrag || state.seekDrag !== drag) return;
+			drag.idleTimer = 0;
+			commitSeekPreview('idle');
+		}, CFG.SEEK_IDLE_COMMIT_MS);
+	}
+
+	function updateSeekPreview(clientX, clientY, useMoveThreshold){
+		const drag = state.seekDrag;
+		const duration = state.mainSlot && isFinite(state.mainSlot.duration) ? state.mainSlot.duration : 0;
+		let dx = 0;
+		let dy = 0;
+		let ratio = 0;
+		let time = 0;
+		let zone = 'active';
+
+		if (!drag || !duration) return;
+
+		dx = Math.abs(clientX - drag.x);
+		dy = Math.abs(clientY - drag.y);
+
+		if (useMoveThreshold && dx < CFG.SEEK_PREVIEW_MOVE_PX && dy < CFG.SEEK_PREVIEW_MOVE_PX) {
+			clientX = drag.x;
+			clientY = drag.y;
+		}
+
+		ratio = seekRatioFromClientX(clientX);
+		time = clamp(ratio * duration, 0, duration);
+		zone = seekZoneFromClientY(clientY);
+
+		drag.previewRatio = ratio;
+		drag.previewTime = time;
+		drag.zone = zone;
+
+		setSeekPreviewVars(drag.fromRatio, ratio, formatSeekDelta(time - drag.fromTime), formatClock(time), zone);
+		queueSeekIdleCommit();
 	}
 
 	function slot(name){
@@ -1560,6 +1698,13 @@
 		if (!state.gap.armedAt && !state.gap.waitCount && !state.gap.notified && !state.aux.blocking) return;
 		log('markRecovered', { reason: reason, track: trackInfo(track), gap: state.gap });
 
+		if (state.aux.blocking && !state.auxTest) {
+			log('markRecovered stop aux', { reason: reason, aux: slotInfo(state.auxSlot) });
+			stopSlot(state.auxSlot);
+			state.aux.blocking = 0;
+			state.mode = 'main';
+		}
+
 		state.gap.armedAt = 0;
 		state.gap.reason = '';
 		state.gap.waitCount = 0;
@@ -2035,19 +2180,40 @@
 
 	function releaseSeekDrag(){
 		if (!state.seekDrag) return;
+		clearSeekIdleTimer();
 		if (progressNode.releasePointerCapture && state.seekDrag.id != null) {
 			try { progressNode.releasePointerCapture(state.seekDrag.id); } catch (e) {
 				warn('seek release capture failed', String(e && e.message || e));
 			}
 		}
 		state.seekDrag = null;
+		clearSeekPreview();
 	}
 
 	function onProgressPointerDown(e){
-		if (e.isPrimary === false || state.seekDrag) return;
+		const duration = state.mainSlot && isFinite(state.mainSlot.duration) ? state.mainSlot.duration : 0;
+		let fromTime = 0;
+		let fromRatio = 0;
+
+		if (e.isPrimary === false || state.seekDrag || !duration) return;
+
+		fromTime = isFinite(state.mainSlot.currentTime) ? state.mainSlot.currentTime : 0;
+		fromTime = clamp(fromTime, 0, duration);
+		fromRatio = clamp(fromTime / duration, 0, 1);
+
 		state.seekDrag = {
-			id: e.pointerId
+			id: e.pointerId,
+			x: e.clientX,
+			y: e.clientY,
+			fromTime: fromTime,
+			fromRatio: fromRatio,
+			previewTime: fromTime,
+			previewRatio: fromRatio,
+			zone: 'active',
+			idleTimer: 0,
+			lastCommitTime: NaN
 		};
+
 		if (progressNode.setPointerCapture) {
 			try { progressNode.setPointerCapture(e.pointerId); } catch (e2) {
 				warn('seek capture failed', String(e2 && e2.message || e2));
@@ -2055,22 +2221,37 @@
 		}
 		if (e.stopPropagation) e.stopPropagation();
 		if (e.cancelable) e.preventDefault();
-		seekFromClientX(e.clientX, 'down');
+
+		updateSeekPreview(e.clientX, e.clientY, false);
 	}
 
 	function onProgressPointerMove(e){
 		if (!state.seekDrag || e.pointerId !== state.seekDrag.id) return;
 		if (e.stopPropagation) e.stopPropagation();
 		if (e.cancelable) e.preventDefault();
-		seekFromClientX(e.clientX, 'move');
+
+		updateSeekPreview(e.clientX, e.clientY, true);
 	}
 
 	function onProgressPointerUp(e){
-		if (!state.seekDrag || e.pointerId !== state.seekDrag.id) return;
+		const drag = state.seekDrag;
+		let previewTime = 0;
+		let cancel = 0;
+		let committed = 0;
+
+		if (!drag || e.pointerId !== drag.id) return;
 		if (e.stopPropagation) e.stopPropagation();
 		if (e.cancelable) e.preventDefault();
-		seekFromClientX(e.clientX, 'up');
+
+		updateSeekPreview(e.clientX, e.clientY, false);
+
+		previewTime = drag.previewTime;
+		cancel = drag.zone === 'cancel';
+		committed = isFinite(drag.lastCommitTime) && Math.abs(drag.lastCommitTime - previewTime) < 0.05;
 		releaseSeekDrag();
+
+		if (!cancel && !committed)
+			seekToTime(previewTime);
 	}
 
 	function onProgressPointerCancel(e){
@@ -2257,7 +2438,7 @@
 	}
 
 	function toggleRepeat(){
-		state.repeat = state.repeat ? 0 : 0;
+		state.repeat = state.repeat ? 0 : 1;
 		log('toggleRepeat', state.repeat);
 		updateRoot('state');
 	}
@@ -2332,7 +2513,8 @@
 	}
 
 	function onProgressClick(e){
-		seekFromClientX(e.clientX, 'click');
+		if (e && e.stopPropagation) e.stopPropagation();
+		if (e && e.cancelable) e.preventDefault();
 	}
 
 	function fullscreenElement(){
@@ -2930,7 +3112,7 @@
 		if (!state.mainLastMoveAt) state.mainLastMoveAt = now;
 		stuckMs = now - state.mainLastMoveAt;
 
-		if (!state.mainStallAt && (main.paused || main.readyState < CFG.NEXT_READY_STATE || stuckMs >= CFG.STALL_RESUME_MS)) {
+		if (!state.mainStallAt && (main.paused || main.readyState < CFG.MAIN_READY_STATE || stuckMs >= CFG.STALL_RESUME_MS)) {
 			state.mainStallAt = state.mainLastMoveAt || now;
 			log('recovery stall start', { stuckMs: stuckMs, main: slotInfo(main) });
 		}
@@ -3025,7 +3207,7 @@
 	function faviconArt(){
 		const svg = '' +
 			'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">' +
-			'<rect width="1024" height="1024" fill="#220022"/>' +
+			'<rect width="1024" height="1024" fill="#662266"/>' +
 			'<text x="512" y="560" text-anchor="middle" dominant-baseline="middle"' +
 				' font-family="Arial, sans-serif" font-size="450" font-weight="700" letter-spacing="6"' +
 				' fill="#ffffff" opacity="1">A3M</text>' +
@@ -3055,6 +3237,7 @@
 
 		state.calmBlob = calmWaveBlob();
 		setVar('--a3m-calm-url', imageVar(state.calmArt));
+		clearSeekPreview();
 
 		svgToPngUrl(state.calmArt, 512).then(function(pngUrl){
 			state.calmArtPng = cleanText(pngUrl || '');
@@ -3117,6 +3300,12 @@
 	window.addEventListener('pagehide', function(){
 		clearMoreTimer();
 		saveSession();
+	});
+
+	//navigator.vibrate(0);
+
+	progressNode.addEventListener('contextmenu', function(e){
+		e.preventDefault();
 	});
 
 	bootstrap();
