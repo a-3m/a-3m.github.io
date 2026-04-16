@@ -976,3 +976,29 @@ a {
 		font-size: 0.76rem;
 	}
 }
+
+
+.a3m-main-row > .a3m-main-dummy-more {
+	position: absolute;
+	left: 0;
+	top: 50%;
+	transform: translateY(-50%);
+}
+
+.a3m-main-row > [data-act="more"] {
+	position: absolute;
+	right: 0;
+	top: 50%;
+	transform: translateY(-50%);
+}
+
+[data-act="extra"]::before {
+
+	-webkit-mask-image: var(--a3m-icon-download);
+	mask-image: var(--a3m-icon-download);
+}
+
+[data-act="extra"] {
+	border-color: transparent;
+	pointer-events: none;
+}
