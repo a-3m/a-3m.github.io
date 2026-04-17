@@ -39,6 +39,7 @@
 	const techNetNode = root.querySelector('[data-role="tech-net"]');
 	const downloadNode = root.querySelector('[data-act="download"]');
 	const progressNode = root.querySelector('[data-act="seek"]');
+	const controlsNodes = root.querySelectorAll('.a3m-control-zone, .a3m-status, .a3m-fs');
 	const playlistSrc = cleanText(root.getAttribute('data-playlist-src') || 'listen0.m3u');
 
 	const id = window.__logs_cfg && window.__logs_cfg.id || 'a3m';
@@ -81,6 +82,7 @@
 		NEXT_READY_STATE: 3,
 		MAIN_LOAD_GRACE_MS: 1600,
 		MORE_HIDE_MS: 4000,
+		CONTROLS_HIDE_MS: 5000,
 	};
 
 	const AUDIO_EXTS = [ 'opus', 'ogg', 'mp3', 'm4a', 'aac', 'wav', 'flac', 'oga' ];
@@ -135,6 +137,8 @@
 		session: null,
 		more: 0,
 		moreTimer: 0,
+		controlsVisible: 1,
+		controlsTimer: 0,
 		rt: {
 			list: [],
 			pos: -1,
@@ -209,7 +213,81 @@
 			state.moreTimer = 0;
 			state.more = 0;
 			updateRoot('state');
+			queueControlsHide('more');
 		}, CFG.MORE_HIDE_MS);
+	}
+
+	function clearControlsTimer(){
+		if (state.controlsTimer) clearTimeout(state.controlsTimer);
+		state.controlsTimer = 0;
+	}
+
+	function applyControlsVisible(){
+		let i = 0;
+		let node = null;
+
+		for (i = 0; i < controlsNodes.length; i++) {
+			node = controlsNodes[i];
+			if (!node) continue;
+			node.hidden = !state.controlsVisible;
+			node.setAttribute('aria-hidden', state.controlsVisible ? 'false' : 'true');
+		}
+	}
+
+	function controlsUiActive(){
+		return pageVisible() && state.controlsVisible;
+	}
+
+	function canAutoHideControls(){
+		return !!(
+			state.controlsVisible &&
+			pageVisible() &&
+			isPlay() &&
+			state.net === 'ok' &&
+			!state.more &&
+			!state.seekDrag &&
+			!state.actionHold &&
+			!state.gesture &&
+			!state.aux.blocking &&
+			!state.aux.testing &&
+			!state.gap.notified
+		);
+	}
+
+	function queueControlsHide(reason){
+		clearControlsTimer();
+		if (!canAutoHideControls()) return;
+
+		state.controlsTimer = setTimeout(function(){
+			state.controlsTimer = 0;
+			if (!canAutoHideControls()) return;
+			setControlsVisible(0, reason || 'idle');
+		}, CFG.CONTROLS_HIDE_MS);
+	}
+
+	function setControlsVisible(visible, reason){
+		visible = visible ? 1 : 0;
+		if (state.controlsVisible === visible) {
+			if (visible) queueControlsHide(reason);
+			return;
+		}
+
+		state.controlsVisible = visible;
+		log('controlsVisible', { visible: visible, reason: cleanText(reason || '') });
+		applyControlsVisible();
+
+		if (visible) {
+			updateRoot('all');
+			queueControlsHide(reason);
+			return;
+		}
+
+		clearControlsTimer();
+		clearPreview();
+	}
+
+	function wakeControls(reason){
+		setControlsVisible(1, reason || 'wake');
 	}
 
 	function cleanText(s){
@@ -297,6 +375,7 @@
 			gap: state.gap,
 			quality: state.quality,
 			more: state.more,
+			controlsVisible: state.controlsVisible,
 			preview: state.preview,
 			main: slotInfo(state.mainSlot),
 			next: slotInfo(state.nextSlot),
@@ -1526,21 +1605,79 @@
 	}
 
 	function reviveSlot(el){
+		const seq = ((el && el.__a3mReviveSeq) || 0) + 1;
+		const index = el && el.__a3mIndex;
+
 		if (!el || !isPlay()) return;
+
+		if (!el.paused && !el.ended && !el.error) {
+			if (el === state.mainSlot) {
+				if (trackIsHealthy()) return;
+			} else if (el.readyState >= CFG.MAIN_READY_STATE) {
+				return;
+			}
+		}
+
+		el.__a3mReviveSeq = seq;
+		state.mainResumeAt = Date.now();
+
 		log('slot revive', slotInfo(el));
+
 		try {
-			state.mainResumeAt = Date.now();
 			el.play().then(function(){
+				if (!el || el.__a3mReviveSeq !== seq) return;
+				if (el.__a3mIndex !== index) return;
+				if (el !== state.mainSlot && el !== state.auxSlot) return;
+
 				log('slot revive ok', slotInfo(el));
 				syncPlaybackState();
 				updateRoot('all');
 			}).catch(function(err){
+				if (!el || el.__a3mReviveSeq !== seq) return;
+				if (el.__a3mIndex !== index) return;
+				if (el !== state.mainSlot && el !== state.auxSlot) return;
+
 				warn('slot revive failed', slotInfo(el), String(err && err.message || err));
 				syncPlaybackState();
 				updateRoot('all');
 			});
 		} catch (e) {
+			if (!el || el.__a3mReviveSeq !== seq) return;
 			warn('slot revive throw', slotInfo(el), String(e && e.message || e));
+		}
+	}
+
+	function revivePlayback(from){
+		log('revivePlayback', from);
+		if (!isPlay()) return;
+
+		if (
+			state.mainIndex >= 0 &&
+			state.mainSlot &&
+			(!state.mainSlot.getAttribute('src') || state.mainSlot.__a3mIndex !== state.mainIndex)
+		) {
+			prepareTrack(state.mainSlot, state.mainIndex);
+		}
+
+		if (
+			state.mainSlot &&
+			(state.mainSlot.ended || state.mainSlot.error) &&
+			nextReady(state.nextSlot) &&
+			!state.aux.blocking
+		) {
+			swapMainNext(true, true);
+			return;
+		}
+
+		if (state.mainSlot)
+			reviveSlot(state.mainSlot);
+
+		if (
+			state.nextIndex < 0 ||
+			!state.nextSlot ||
+			state.nextSlot.__a3mIndex !== state.nextIndex
+		) {
+			scheduleNext();
 		}
 	}
 
@@ -1640,6 +1777,7 @@
 		state.aux.blocking = 1;
 		state.mode = 'aux';
 		state.net = 'fail';
+		wakeControls('aux');
 		log('aux block start', { gap: state.gap, aux: slotInfo(state.auxSlot), targetIndex: state.aux.targetIndex });
 
 		try { state.auxSlot.currentTime = 0; } catch (e) {
@@ -1656,7 +1794,6 @@
 			state.mode = 'main';
 			warn('aux play failed', String(err && err.message || err));
 			syncPlaybackState();
-			refreshStatus();
 			updateRoot('all');
 		});
 	}
@@ -1669,6 +1806,7 @@
 		state.aux.testing = 0;
 		clearAuxTarget(reason);
 		if (!state.auxTest) state.mode = 'main';
+		queueControlsHide(reason);
 	}
 
 	function resetGap(reason){
@@ -1679,6 +1817,7 @@
 		state.gap.notified = 0;
 		state.gap.recovered = 0;
 		refreshStatus();
+		queueControlsHide(reason);
 	}
 
 	function armGap(reason){
@@ -1687,6 +1826,7 @@
 		state.gap.armedAt = Date.now();
 		state.gap.reason = cleanText(reason || 'Playback gap');
 		state.gap.recovered = 0;
+		wakeControls('gap');
 		log('armGap', { reason: state.gap.reason });
 		refreshStatus();
 		updateRoot('state');
@@ -1715,12 +1855,15 @@
 		if (track) setMediaTrack(track);
 		refreshStatus();
 		updateRoot('all');
+		queueControlsHide(reason);
 	}
 
 	function trackIsHealthy(){
 		if (!isPlay()) return false;
 		if (!state.mainSlot || state.mainIndex < 0) return false;
+		if (state.mainSlot.paused) return false;
 		if (state.mainSlot.ended || state.mainSlot.error) return false;
+		if (state.mainSlot.readyState < CFG.MAIN_READY_STATE) return false;
 		if (state.mainLastMoveAt && Date.now() - state.mainLastMoveAt <= CFG.STALL_RESUME_MS) return true;
 		return false;
 	}
@@ -1811,6 +1954,8 @@
 	}
 
 	function updateRoot(what){
+		if (!controlsUiActive()) return;
+
 		if (what === 'progress') {
 			updateRootProgress();
 			return;
@@ -1939,16 +2084,17 @@
 				log('enterMain autoplay ok', slotInfo(state.mainSlot));
 				syncPlaybackState();
 				updateRoot('all');
+				queueControlsHide('play');
 			}).catch(function(err){
 				warn('enterMain autoplay failed', trackInfo(track), String(err && err.message || err));
 				state.play = 'pause';
 				syncPlaybackState();
-				updateRoot('all');
+				wakeControls('play-fail');
 			});
 		} else {
 			state.play = 'pause';
 			syncPlaybackState();
-			updateRoot('all');
+			wakeControls('pause');
 		}
 	}
 
@@ -2075,7 +2221,7 @@
 		}
 
 		syncPlaybackState();
-		updateRoot('all');
+		wakeControls('stop');
 		logState('stopAll done', { hard: !!hard });
 	}
 
@@ -2094,11 +2240,12 @@
 			log('playMain ok', slotInfo(state.mainSlot));
 			syncPlaybackState();
 			updateRoot('all');
+			queueControlsHide('play');
 		}).catch(function(err){
 			warn('playMain failed', trackInfo(track), String(err && err.message || err));
 			state.play = 'pause';
 			syncPlaybackState();
-			updateRoot('all');
+			wakeControls('play-fail');
 		});
 	}
 
@@ -2114,7 +2261,7 @@
 		clearMainLoad('pauseMain');
 		state.play = 'pause';
 		syncPlaybackState();
-		updateRoot('all');
+		wakeControls('pause');
 	}
 
 	function onMainEnded(){
@@ -2188,6 +2335,7 @@
 		}
 		state.seekDrag = null;
 		clearSeekPreview();
+		queueControlsHide('seek');
 	}
 
 	function onProgressPointerDown(e){
@@ -2196,6 +2344,7 @@
 		let fromRatio = 0;
 
 		if (e.isPrimary === false || state.seekDrag || !duration) return;
+		wakeControls('seek');
 
 		fromTime = isFinite(state.mainSlot.currentTime) ? state.mainSlot.currentTime : 0;
 		fromTime = clamp(fromTime, 0, duration);
@@ -2301,6 +2450,7 @@
 		clearActionHoldTimer();
 		releaseActionHoldCapture();
 		state.actionHold = null;
+		queueControlsHide('action');
 	}
 
 	function queueActionHold(act, el, e){
@@ -2343,6 +2493,7 @@
 		const act = cleanText(el && el.getAttribute('data-act') || '');
 
 		if (!act || e.isPrimary === false || state.actionHold || state.seekDrag) return;
+		wakeControls('action');
 		queueActionHold(act, el, e);
 	}
 
@@ -2432,15 +2583,18 @@
 	function toggleMore(){
 		state.more = state.more ? 0 : 1;
 		log('toggleMore', state.more);
+		wakeControls('more');
 		if (state.more) queueMoreHide();
 		else clearMoreTimer();
 		updateRoot('state');
+		queueControlsHide('more');
 	}
 
 	function toggleRepeat(){
 		state.repeat = state.repeat ? 0 : 1;
 		log('toggleRepeat', state.repeat);
 		updateRoot('state');
+		queueControlsHide('repeat');
 	}
 
 	function toggleShuffle(){
@@ -2456,6 +2610,7 @@
 			state.nextIndex = -1;
 		}
 		updateRoot('state');
+		queueControlsHide('shuffle');
 	}
 
 	function toggleAuxTest(){
@@ -2465,6 +2620,7 @@
 
 		state.auxTest = state.auxTest ? 0 : 1;
 		log('toggleAuxTest', { auxTest: state.auxTest, track: trackInfo(track) });
+		wakeControls('aux-test');
 
 		if (state.auxTest) {
 			resetGap('auxTest on');
@@ -2492,6 +2648,7 @@
 		state.mode = 'main';
 		syncPlaybackState();
 		updateRoot('all');
+		queueControlsHide('aux-test');
 	}
 
 	function toggleQuality(){
@@ -2505,6 +2662,7 @@
 			loadMain(state.mainIndex, isPlay());
 		}
 		updateRoot('state');
+		queueControlsHide('quality');
 	}
 
 	function refreshPage(){
@@ -2568,7 +2726,6 @@
 			}
 			g.held = 1;
 			debug('longPress fire', { dx: dx, dy: dy });
-			//setPreview('fullscreen');
 			if (!isPlay()) {
 				setPreview('toggle');
 				togglePlay();
@@ -2598,7 +2755,16 @@
 	function onPointerDown(e){
 		const target = e.target && e.target.closest ? e.target.closest('button,a,[data-act="seek"]') : null;
 
-		if (target || pointNearProgress(e.clientX, e.clientY) || e.isPrimary === false || state.gesture || state.seekDrag) return;
+		if (e.isPrimary === false || state.seekDrag) return;
+
+		if (!state.controlsVisible) {
+			wakeControls('pointerdown');
+			return;
+		}
+
+		if (target || pointNearProgress(e.clientX, e.clientY) || state.gesture) return;
+
+		wakeControls('pointerdown');
 		state.gesture = {
 			id: e.pointerId,
 			x: e.clientX,
@@ -2616,7 +2782,6 @@
 			}
 		}
 		if (e.cancelable) e.preventDefault();
-		//setPreview('toggle');
 		queueLongPress();
 	}
 
@@ -2669,7 +2834,6 @@
 		clearPreview();
 
 		if (act === 'toggle') {
-			//togglePlay();
 		} else if (act === 'fullscreen') {
 			toggleFullscreen();
 		} else if (act === 'refresh') {
@@ -2678,6 +2842,8 @@
 			if (act === 'next') onNext();
 			else if (act === 'prev') onPrev();
 		}
+
+		queueControlsHide('pointer');
 	}
 
 	function onPointerCancel(e){
@@ -2689,6 +2855,7 @@
 		releaseGestureCapture();
 		state.gesture = null;
 		clearPreview();
+		queueControlsHide('pointer');
 	}
 
 	function ensureQualityButton(){
@@ -2715,6 +2882,7 @@
 			const act = el ? cleanText(el.getAttribute('data-act') || '') : '';
 
 			if (!act) return;
+			wakeControls('click');
 			log('action click', act);
 			if (act !== 'download') e.preventDefault();
 
@@ -2737,6 +2905,8 @@
 			else if (act === 'quality') toggleQuality();
 			else if (act === 'refresh') refreshPage();
 			else if (act === 'fullscreen') toggleFullscreen();
+
+			queueControlsHide('click');
 		});
 
 		progressNode.addEventListener('click', onProgressClick);
@@ -2756,27 +2926,52 @@
 		root.addEventListener('pointercancel', onPointerCancel);
 		root.addEventListener('lostpointercapture', onPointerCancel);
 
-		document.addEventListener('fullscreenchange', function(){
-			log('fullscreenchange', { active: !!fullscreenElement() });
-			updateRoot('state');
-		});
-		document.addEventListener('webkitfullscreenchange', function(){
-			log('webkitfullscreenchange', { active: !!fullscreenElement() });
-			updateRoot('state');
-		});
+		/* power care */
 		document.addEventListener('visibilitychange', function(){
-			log('visibilitychange', { hidden: !!document.hidden });
-			if (!document.hidden) revivePlayback();
+			log('visibilitychange', document.visibilityState);
+
+			if (!pageVisible()) {
+				clearControlsTimer();
+				return;
+			}
+
+			wakeControls('visibilitychange');
+			revivePlayback('visibilitychange');
 		});
-		window.addEventListener('pageshow', function(){
-			log('pageshow');
-			revivePlayback();
+
+		window.addEventListener('pageshow', function(e){
+			log('pageshow', { persisted: !!(e && e.persisted) });
+			if (pageVisible()) {
+				wakeControls(e && e.persisted ? 'pageshow-bfcache' : 'pageshow');
+				revivePlayback(e && e.persisted ? 'pageshow-bfcache' : 'pageshow');
+			}
 		});
+
+		window.addEventListener('pagehide', function(e){
+			log('pagehide', { persisted: !!(e && e.persisted) });
+			clearControlsTimer();
+		});
+
 		window.addEventListener('online', function(){
 			log('online');
 			state.net = 'ok';
-			revivePlayback();
+			if (pageVisible()) wakeControls('online');
+			revivePlayback('online');
 		});
+
+		document.addEventListener('freeze', function(){
+			log('freeze');
+			clearControlsTimer();
+		});
+
+		document.addEventListener('resume', function(){
+			log('resume');
+			if (pageVisible()) {
+				wakeControls('resume');
+				revivePlayback('resume');
+			}
+		});
+		/* /power care */
 
 		function parseSeekValue(spec, duration, currentTime){
 			let s = cleanText(spec || '');
@@ -2841,6 +3036,7 @@
 
 		document.addEventListener('keydown', function(e){
 			if (e.target && /input|textarea/i.test(String(e.target.tagName || ''))) return;
+			wakeControls('keydown');
 			debug('keydown', e.key);
 			if (e.key === ' ' || e.key === 'e') {
 				e.preventDefault();
@@ -2876,6 +3072,7 @@
 				e.preventDefault();
 				toggleShuffle();
 			}
+			queueControlsHide('keydown');
 		});
 	}
 
@@ -2937,6 +3134,7 @@
 		state.gap.notified = 1;
 		state.gap.recovered = 0;
 		state.net = 'fail';
+		wakeControls('gap');
 		setMediaGap(mediaTrack());
 		refreshStatus();
 		updateRoot('all');
@@ -3022,6 +3220,7 @@
 			});
 
 			if (el === state.mainSlot) {
+				wakeControls('error');
 				if (nextReady(state.nextSlot)) {
 					swapMainNext(isPlay(), true);
 					return;
@@ -3040,26 +3239,6 @@
 				scheduleNext(currentIndexBase(), failedIndex);
 			}
 		});
-	}
-
-	function revivePlayback(){
-		logState('revivePlayback');
-		if (!isPlay()) return;
-
-		if (state.mainIndex >= 0 && state.mainSlot &&
-			(!state.mainSlot.getAttribute('src') || state.mainSlot.__a3mIndex !== state.mainIndex)) {
-			log('revivePlayback prepare main', { mainIndex: state.mainIndex });
-			prepareTrack(state.mainSlot, state.mainIndex);
-		}
-
-		reviveSlot(state.mainSlot);
-
-		if (
-			state.nextIndex < 0 &&
-			(state.net !== 'ok' || state.gap.armedAt || state.aux.blocking || state.mainSlot.ended || state.mainSlot.error)
-		) {
-			scheduleNext();
-		}
 	}
 
 	function checkWarmWindow(){
@@ -3139,11 +3318,19 @@
 		updateRoot('state');
 	}
 
+	function pageVisible(){
+		return document.visibilityState === 'visible';
+	}
+
 	function tickProgress(){
 		clearInterval(state.progressTimer);
 		log('progress timer start', CFG.PROGRESS_TICK_MS);
 		state.progressTimer = setInterval(function(){
-			updateRoot('progress');
+			if (controlsUiActive())
+				updateRoot('progress');
+
+			if (!isPlay()) return;
+
 			checkWarmWindow();
 			checkPlaybackRecovery();
 		}, CFG.PROGRESS_TICK_MS);
@@ -3223,6 +3410,31 @@
 			state.play = 'pause';
 	}
 
+function initMediaDevices(){
+	log("initMediaDevices");
+
+	if (navigator.mediaDevices) {
+		navigator.mediaDevices.addEventListener('devicechange', async function(){
+			log('devicechange');
+
+			try {
+				const devs = await navigator.mediaDevices.enumerateDevices();
+				log('devices', devs.map(function(d){
+					return {
+						kind: d.kind,
+						label: d.label,
+						deviceId: d.deviceId
+					};
+				}));
+			} catch (e) {
+				warn('enumerateDevices failed', String(e && e.message || e));
+			}
+
+			revivePlayback('devicechange');
+		});
+	}
+}
+
 	function bootstrap(){
 		let quality = '';
 
@@ -3238,6 +3450,7 @@
 		state.calmBlob = calmWaveBlob();
 		setVar('--a3m-calm-url', imageVar(state.calmArt));
 		clearSeekPreview();
+		applyControlsVisible();
 
 		svgToPngUrl(state.calmArt, 512).then(function(pngUrl){
 			state.calmArtPng = cleanText(pngUrl || '');
@@ -3261,6 +3474,7 @@
 		bindAudio(state.auxSlot);
 		bindActions();
 		initMediaSession();
+		initMediaDevices();
 		tickProgress();
 
 		fetchPlaylist().then(function(list){
@@ -3293,16 +3507,15 @@
 			yearNode.textContent = '';
 			setCover(state.calmArt, 1);
 			setStatus('Please reload', 'error');
-			updateRoot('all');
+			wakeControls('bootstrap-fail');
 		});
 	}
 
 	window.addEventListener('pagehide', function(){
+		clearControlsTimer();
 		clearMoreTimer();
 		saveSession();
 	});
-
-	//navigator.vibrate(0);
 
 	progressNode.addEventListener('contextmenu', function(e){
 		e.preventDefault();

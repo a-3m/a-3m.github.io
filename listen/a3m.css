@@ -993,9 +993,7 @@ a {
 }
 
 [data-act="extra"]::before {
-
-	-webkit-mask-image: var(--a3m-icon-download);
-	mask-image: var(--a3m-icon-download);
+	content: none;
 }
 
 [data-act="extra"] {
