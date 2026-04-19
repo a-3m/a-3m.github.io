@@ -1279,7 +1279,7 @@ function buildLoopBlob(mode, variant){
 				(Math.sin(Math.PI * 2 * t * 78) * 0.0022) +
 				(Math.sin(Math.PI * 2 * t * 119) * 0.0014) +
 				(noise * 0.010) +
-				(air * (0.022 + (gust * 0.016))) +
+				(air * (0.022 + (gust * 0.026))) +
 				(foam * (0.005 + (swell * 0.012)));
 		}
 
