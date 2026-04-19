@@ -1,0 +1,6 @@
+<!-- file: icon.svg -->
+<!-- # vim: set ts=4 sw=4 sts=4 noet : -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+	<rect width="512" height="512" fill="#000000"/>
+	<rect x="64" y="64" width="384" height="384" fill="#173f66"/>
+</svg>

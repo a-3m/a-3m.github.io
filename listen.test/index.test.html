@@ -1,0 +1,340 @@
+<!-- file: index.test.html -->
+<!-- # vim: set ts=4 sw=4 sts=4 noet : -->
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<meta name="theme-color" content="#000000">
+	<link rel="manifest" href="test.webmanifest">
+	<link rel="icon" href="icons/test.svg?1" type="image/svg+xml">
+	<title>A3M Sea Loop Test</title>
+	<style>
+		html,
+		body {
+			width: 100%;
+			height: 100%;
+			margin: 0;
+			padding: 0;
+			background: #000;
+			color: #fff;
+			overflow: hidden;
+			font-family: Arial, sans-serif;
+		}
+
+		body {
+			position: relative;
+			touch-action: none;
+			-webkit-tap-highlight-color: transparent;
+		}
+
+		.test-top {
+			position: absolute;
+			left: 50%;
+			top: 10px;
+			z-index: 20;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			gap: 10px;
+			width: min(calc(100vw - 20px), 620px);
+			transform: translateX(-50%);
+			pointer-events: none;
+		}
+
+		.test-qr-box,
+		.test-links,
+		.test-install,
+		.test-freeze {
+			pointer-events: auto;
+			touch-action: auto;
+		}
+
+		.test-qr-box {
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			gap: 8px;
+			padding: 10px;
+		}
+
+		.test-qr-title {
+			font-size: 14px;
+			line-height: 1.2;
+			color: rgba(255, 255, 255, 0.92);
+			text-align: center;
+			white-space: nowrap;
+		}
+
+		.test-qr {
+			width: 148px;
+			height: 148px;
+			padding: 8px;
+			box-sizing: border-box;
+			border-radius: 10px;
+			background: #fff;
+		}
+
+		.test-qr svg {
+			display: block;
+			width: 100%;
+			height: auto;
+		}
+
+		.test-cover {
+			appearance: none;
+			position: absolute;
+			left: 50%;
+			top: 50%;
+			width: min(72vmin, 560px);
+			height: min(72vmin, 560px);
+			transform: translate(-50%, -50%);
+			border: 0;
+			padding: 0;
+			background-color: #111;
+			background-repeat: no-repeat;
+			background-position: center;
+			background-size: cover;
+			box-shadow:
+				0 0 0 1px rgba(255, 255, 255, 0.08),
+				0 20px 80px rgba(0, 0, 0, 0.75);
+			cursor: pointer;
+			outline: none;
+			touch-action: none;
+			overflow: hidden;
+		}
+
+		.test-cover::before {
+			content: '';
+			position: absolute;
+			left: 24px;
+			top: 24px;
+			right: 24px;
+			bottom: 24px;
+			background: rgba(0, 0, 0, 0.36);
+		}
+
+		.test-cover:focus,
+		.test-cover:focus-visible {
+			outline: none;
+		}
+
+		.test-cover-ui {
+			position: relative;
+			z-index: 1;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			width: 100%;
+			height: 100%;
+			padding: 34px 24px 24px;
+			box-sizing: border-box;
+			color: rgba(255, 255, 255, 0.94);
+			text-align: center;
+		}
+
+		.test-cover-ui.is-offline {
+			color: rgba(255, 96, 96, 0.98);
+		}
+
+		.test-cover-mode {
+			font-size: clamp(42px, 11vmin, 128px);
+			font-weight: 700;
+			line-height: 1;
+		}
+
+		.test-cover-title {
+			margin-top: 18px;
+			font-size: clamp(28px, 7.2vmin, 82px);
+			font-weight: 700;
+			line-height: 1.05;
+		}
+
+		.test-cover-msg {
+			margin-top: 26px;
+			font-size: clamp(30px, 8.2vmin, 86px);
+			font-weight: 700;
+			line-height: 1.05;
+		}
+
+		.test-cover-sub {
+			margin-top: 14px;
+			font-size: clamp(18px, 4.6vmin, 52px);
+			font-weight: 700;
+			line-height: 1.08;
+		}
+
+		.test-cover-stats {
+			margin-top: auto;
+			align-self: stretch;
+			display: flex;
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 6px;
+			font-family: monospace;
+			font-size: clamp(22px, 4.8vmin, 64px);
+			font-weight: 700;
+			line-height: 1.05;
+			text-align: left;
+		}
+
+		.test-links {
+			position: absolute;
+			left: 50%;
+			bottom: 60px;
+			z-index: 20;
+			display: flex;
+			flex-direction: column;
+			gap: 8px;
+			width: min(calc(100vw - 20px), 620px);
+			transform: translateX(-50%);
+		}
+
+		.test-link {
+			display: block;
+			padding: 10px 12px;
+			border-radius: 12px;
+			border: 1px solid #aaa3;
+			background: rgba(0, 0, 0, 0.62);
+			color: rgba(255, 255, 255, 0.96);
+			text-decoration: none;
+			font-size: 15px;
+			line-height: 1.3;
+			word-break: break-all;
+		}
+
+		.test-link:hover,
+		.test-link:focus-visible {
+			background: rgba(255, 255, 255, 0.12);
+			outline: none;
+		}
+
+		.test-install,
+		.test-freeze {
+			appearance: none;
+			position: absolute;
+			bottom: 0;
+			z-index: 30;
+			border: 0;
+			padding: 8px 12px;
+			font: inherit;
+			font-size: 14px;
+			line-height: 1.2;
+			cursor: pointer;
+		}
+
+		.test-install {
+			right: 0;
+			border-radius: 18px 0 0 0;
+			background: rgba(255, 255, 255, 0.68);
+			color: #000;
+		}
+
+		.test-install:hover,
+		.test-install:focus-visible {
+			background: rgba(170, 210, 255, 0.96);
+			outline: none;
+		}
+
+		.test-freeze {
+			left: 0;
+			border-radius: 0 18px 0 0;
+			background: rgba(255, 255, 255, 0.18);
+			color: rgba(255, 255, 255, 0.96);
+		}
+
+		.test-freeze:hover,
+		.test-freeze:focus-visible {
+			background: rgba(255, 255, 255, 0.28);
+			outline: none;
+		}
+
+		.test-freeze[aria-pressed="true"] {
+			background: rgba(255, 96, 96, 0.30);
+		}
+
+		@media (max-width: 760px) {
+			.test-top {
+				top: 8px;
+				width: calc(100vw - 16px);
+				gap: 8px;
+			}
+
+			.test-qr {
+				width: 132px;
+				height: 132px;
+			}
+
+			.test-links {
+				width: 80%;
+			}
+
+			.test-link {
+				font-size: 14px;
+				padding: 9px 10px;
+			}
+
+			.test-cover {
+				width: min(84vw, 560px);
+				height: min(84vw, 560px);
+			}
+
+			.test-cover::before {
+				left: 18px;
+				top: 18px;
+				right: 18px;
+				bottom: 18px;
+			}
+
+			.test-cover-ui {
+				padding: 22px 18px 18px;
+			}
+
+			.test-cover-stats {
+				gap: 4px;
+			}
+		}
+	</style>
+
+	<script src="/libs/logs-core.js?a3m-sea-test"></script>
+	<script src="/libs/logs-ws.js?a3m-sea-test"></script>
+	<script src="/libs/a3m-qrcode.js?1"></script>
+</head>
+<body>
+
+	<div class="test-ui" data-role="ui-wrap">
+		<div class="test-top">
+			<div class="test-qr-box" data-no-refresh="1">
+				<div class="test-qr-title">Scan this QR on another phone</div>
+				<div class="test-qr" data-role="qr"></div>
+			</div>
+		</div>
+
+		<button type="button" class="test-cover" data-act="cover" aria-label="Wake audio loop">
+			<span class="test-cover-ui" data-role="cover-ui" aria-hidden="true">
+				<span class="test-cover-mode" data-role="cover-mode"></span>
+				<span class="test-cover-title" data-role="cover-title"></span>
+				<span class="test-cover-msg" data-role="cover-msg" hidden></span>
+				<span class="test-cover-sub" data-role="cover-sub" hidden></span>
+				<span class="test-cover-stats">
+					<span data-role="cover-fail"></span>
+					<span data-role="cover-loops"></span>
+					<span data-role="cover-up"></span>
+					<span data-role="cover-online"></span>
+				</span>
+			</span>
+		</button>
+
+		<div class="test-links" data-no-refresh="1">
+			<a class="test-link" data-role="share-link" href="#" target="_blank" rel="noreferrer">Link: </a>
+			<a class="test-link" href="rootCA.pem" download="rootCA.pem">Download and install CA certificate</a>
+		</div>
+
+		<button type="button" class="test-install" data-act="install-app" hidden>Install app</button>
+	</div>
+
+	<button type="button" class="test-freeze" data-act="freeze-ui" aria-pressed="false">LIVE UI</button>
+
+	<script src="test.js?10"></script>
+</body>
+</html>

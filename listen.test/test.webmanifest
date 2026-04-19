@@ -1,0 +1,19 @@
+{
+  "_": "File: test.webmanifest",
+  "id": "./index.test.html",
+  "name": "A3M Sea Loop Test",
+  "short_name": "SeaLoop",
+  "start_url": "./index.test.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "icons/test.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
