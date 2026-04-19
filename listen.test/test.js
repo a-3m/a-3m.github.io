@@ -28,7 +28,6 @@
 	);
 
 	const cfg = window.__a3m_test_cfg || { pingUrl: 'test.webmanifest' };
-	const cfg = window.__a3m_test_cfg || { pingUrl: '' };
 
 	function pingUrl(){
 		return cfg.pingUrl + '?ts=' + Date.now();
