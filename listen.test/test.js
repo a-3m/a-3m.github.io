@@ -5,7 +5,6 @@
 
 ;(function(){
 	const id = window.__logs_cfg && window.__logs_cfg.id || 'a3m-sea-test';
-	const uiWrapNode = document.querySelector('[data-role="ui-wrap"]');
 	const coverNode = document.querySelector('[data-act="cover"]');
 	const coverUiNode = document.querySelector('[data-role="cover-ui"]');
 	const coverModeNode = document.querySelector('[data-role="cover-mode"]');
@@ -27,15 +26,10 @@
 		(navigator.msMaxTouchPoints > 0)
 	);
 
-	const cfg = window.__a3m_test_cfg || { pingUrl: 'test.webmanifest' };
-
-	function pingUrl(){
-		return cfg.pingUrl + '?ts=' + Date.now();
-	}
-
 	const state = {
 		audio: null,
-		onlineUrl: '',
+		onlineUrls: [],
+		onlineIndex: 0,
 		offlineUrl: '',
 		pendingSeek: -1,
 		pendingPlay: 0,
@@ -150,7 +144,10 @@
 	}
 
 	function currentBlobUrl(){
-		return state.mode === 'offline' ? state.offlineUrl : state.onlineUrl;
+		if (state.mode === 'offline')
+			return state.offlineUrl;
+
+		return state.onlineUrls[state.onlineIndex % state.onlineUrls.length] || '';
 	}
 
 	function shareUrl(){
@@ -158,7 +155,7 @@
 	}
 
 	function shareLabel(){
-		return window.location.protocol + '//' + window.location.host + window.location.pathname;
+		return window.location.host + window.location.pathname;
 	}
 
 	function gestureBlockedTarget(target){
@@ -235,10 +232,8 @@
 
 	function syncFreezeUi(){
 		if (!freezeNode) return;
-		freezeNode.textContent = state.coverFrozen ? 'UI LOCKED' : 'LIVE UI';
+		freezeNode.textContent = state.coverFrozen ? 'UI FROZEN' : 'LIVE UI';
 		freezeNode.setAttribute('aria-pressed', state.coverFrozen ? 'true' : 'false');
-		if (uiWrapNode)
-			uiWrapNode.hidden = !!state.coverFrozen;
 	}
 
 	function setCoverDirty(){
@@ -519,7 +514,7 @@
 
 		if (shareLinkNode) {
 			shareLinkNode.href = shareUrl();
-			shareLinkNode.textContent = shareLabel();
+			shareLinkNode.textContent = 'Open on another phone: ' + shareLabel();
 		}
 
 		if (!qrNode) return;
@@ -577,7 +572,7 @@
 
 	function swapBlob(mode, reason){
 		let phase = 0;
-		const nextUrl = mode === 'offline' ? state.offlineUrl : state.onlineUrl;
+		const nextUrl = mode === 'offline' ? state.offlineUrl : currentBlobUrl();
 
 		if (!state.audio) return;
 		if (state.mode === mode && state.audio.getAttribute('src') === nextUrl) {
@@ -603,6 +598,29 @@
 		state.audio.src = nextUrl;
 		state.audio.load();
 		updateMediaMeta(reason || 'swap');
+	}
+
+	function swapOnlineLoop(reason){
+		const nextUrl = currentBlobUrl();
+
+		if (!state.audio || state.mode !== 'online') return;
+		if (state.audio.getAttribute('src') === nextUrl) {
+			syncVisual(reason || 'online-loop');
+			return;
+		}
+
+		state.pendingSeek = 0;
+		state.pendingPlay = state.wantPlay && !state.otherInstance ? 1 : 0;
+
+		log('swapOnlineLoop', {
+			reason: cleanText(reason || ''),
+			index: state.onlineIndex,
+			url: safeUrl(nextUrl)
+		});
+
+		state.audio.src = nextUrl;
+		state.audio.load();
+		syncVisual(reason || 'online-loop');
 	}
 
 	function initAudio(){
@@ -680,7 +698,13 @@
 					now: round1(audio.currentTime),
 					loopCount: state.loopCount
 				});
-				syncVisual('loop');
+
+				if (state.mode === 'online' && state.onlineUrls.length > 1) {
+					state.onlineIndex = state.loopCount % state.onlineUrls.length;
+					swapOnlineLoop('loop');
+				} else {
+					syncVisual('loop');
+				}
 			}
 			state.lastTime = audio.currentTime;
 		});
@@ -751,8 +775,7 @@
 	}
 
 	function runPing(reason){
-
-		const url = pingUrl();
+		const url = 'test.webmanifest?ts=' + Date.now();
 
 		log('ping start', { reason: cleanText(reason || ''), url: url });
 
@@ -802,7 +825,8 @@
 				paused: !!(state.audio && state.audio.paused),
 				currentTime: round1(state.audio && state.audio.currentTime),
 				coverFrozen: state.coverFrozen,
-				coverDirty: state.coverDirty
+				coverDirty: state.coverDirty,
+				onlineIndex: state.onlineIndex
 			});
 
 			if (
@@ -1122,7 +1146,7 @@
 				syncFreezeUi();
 				log('cover freeze', { frozen: state.coverFrozen });
 				if (!state.coverFrozen)
-					renderCover('unlock', 1);
+					renderCover('unfreeze', 1);
 			});
 		}
 
@@ -1138,8 +1162,11 @@
 
 	function bootstrap(){
 		log('bootstrap');
-		state.onlineUrl = buildLoopBlob('online');
-		state.offlineUrl = buildLoopBlob('offline');
+		state.onlineUrls = [
+			buildLoopBlob('online', 0),
+			buildLoopBlob('online', 1)
+		];
+		state.offlineUrl = buildLoopBlob('offline', 0);
 		buildMediaArtworkCache();
 		setOnline(1, 'bootstrap');
 		bindInstall();
@@ -1161,114 +1188,132 @@
 		runPing('bootstrap');
 	}
 
-	function buildLoopBlob(mode){
-		const sampleRate = 48000;
-		const seconds = state.loopSeconds;
-		const fadeSec = 1;
-		const totalFrames = sampleRate * seconds;
-		const channels = 2;
-		const bytesPerSample = 4;
-		const blockAlign = channels * bytesPerSample;
-		const dataSize = totalFrames * blockAlign;
-		const buf = new ArrayBuffer(44 + dataSize);
-		const view = new DataView(buf);
-		let off = 44;
-		let i = 0;
-		let ch = 0;
-		let noise = 0;
-		let air = 0;
-		let foam = 0;
-		let gust = 0;
-		let swell = 0;
-		let birdA = 0;
-		let birdB = 0;
-		let t = 0;
-		let env = 1;
-		let s = 0;
-		let blobUrl = '';
+function buildLoopBlob(mode, variant){
+	const sampleRate = 48000;
+	const seconds = state.loopSeconds;
+	const fadeSec = 1;
+	const totalFrames = sampleRate * seconds;
+	const channels = 2;
+	const bytesPerSample = 4;
+	const blockAlign = channels * bytesPerSample;
+	const dataSize = totalFrames * blockAlign;
+	const buf = new ArrayBuffer(44 + dataSize);
+	const view = new DataView(buf);
+	let off = 44;
+	let i = 0;
+	let ch = 0;
+	let noise = 0;
+	let air = 0;
+	let foam = 0;
+	let gust = 0;
+	let swell = 0;
+	let birdA = 0;
+	let birdB = 0;
+	let wind = 0;
+	let hush = 0;
+	let drift = 0;
+	let veil = 0;
+	let t = 0;
+	let env = 1;
+	let s = 0;
+	let blobUrl = '';
 
-		function writeAscii(pos, text){
-			let j = 0;
-			for (j = 0; j < text.length; j++)
-				view.setUint8(pos + j, text.charCodeAt(j));
-		}
-
-		writeAscii(0, 'RIFF');
-		view.setUint32(4, 36 + dataSize, true);
-		writeAscii(8, 'WAVE');
-		writeAscii(12, 'fmt ');
-		view.setUint32(16, 16, true);
-		view.setUint16(20, 3, true);
-		view.setUint16(22, channels, true);
-		view.setUint32(24, sampleRate, true);
-		view.setUint32(28, sampleRate * blockAlign, true);
-		view.setUint16(32, blockAlign, true);
-		view.setUint16(34, bytesPerSample * 8, true);
-		writeAscii(36, 'data');
-		view.setUint32(40, dataSize, true);
-
-		for (i = 0; i < totalFrames; i++) {
-			t = i / sampleRate;
-
-			noise = (noise * 0.996) + ((Math.random() * 2 - 1) * 0.004);
-			air = (air * 0.985) + ((Math.random() * 2 - 1) * 0.0034);
-			foam = ((Math.random() * 2 - 1) * 0.5) - (foam * 0.72);
-
-			gust = 0.5 + 0.5 * Math.sin(Math.PI * 2 * t * 0.061 + 0.55 * Math.sin(Math.PI * 2 * t * 0.017));
-			swell = 0.5 + 0.5 * Math.sin(Math.PI * 2 * t * 0.137);
-
-			if (mode === 'offline') {
-				birdA = Math.max(0, Math.sin(Math.PI * 2 * t * 2.15));
-				birdA = birdA * birdA * birdA * birdA * birdA;
-				birdA *= Math.sin(Math.PI * 2 * t * (2600 + 380 * Math.sin(Math.PI * 2 * t * 0.27)));
-
-				birdB = Math.max(0, Math.sin(Math.PI * 2 * t * 1.42 + 1.4));
-				birdB = birdB * birdB * birdB * birdB * birdB * birdB;
-				birdB *= Math.sin(Math.PI * 2 * t * (3400 + 520 * Math.sin(Math.PI * 2 * t * 0.19)));
-
-				s =
-					(birdA * 0.075) +
-					(birdB * 0.055) +
-					(noise * 0.002);
-			} else {
-				s =
-					(Math.sin(Math.PI * 2 * t * 78) * 0.0022) +
-					(Math.sin(Math.PI * 2 * t * 119) * 0.0014) +
-					(noise * 0.010) +
-					(air * (0.022 + (gust * 0.016))) +
-					(foam * (0.005 + (swell * 0.012)));
-			}
-
-			if (t < fadeSec) {
-				env = t / fadeSec;
-			} else if (t > seconds - fadeSec) {
-				env = (seconds - t) / fadeSec;
-			} else {
-				env = 1;
-			}
-
-			if (env < 0) env = 0;
-			if (env > 1) env = 1;
-
-			s *= env * 0.82;
-
-			if (s > 1) s = 1;
-			if (s < -1) s = -1;
-
-			for (ch = 0; ch < channels; ch++) {
-				view.setFloat32(off, s, true);
-				off += 4;
-			}
-		}
-
-		blobUrl = URL.createObjectURL(new Blob([ buf ], { type: 'audio/wav' }));
-		log('blob ready', {
-			mode: mode,
-			seconds: seconds,
-			url: safeUrl(blobUrl)
-		});
-		return blobUrl;
+	function writeAscii(pos, text){
+		let j = 0;
+		for (j = 0; j < text.length; j++)
+			view.setUint8(pos + j, text.charCodeAt(j));
 	}
+
+	writeAscii(0, 'RIFF');
+	view.setUint32(4, 36 + dataSize, true);
+	writeAscii(8, 'WAVE');
+	writeAscii(12, 'fmt ');
+	view.setUint32(16, 16, true);
+	view.setUint16(20, 3, true);
+	view.setUint16(22, channels, true);
+	view.setUint32(24, sampleRate, true);
+	view.setUint32(28, sampleRate * blockAlign, true);
+	view.setUint16(32, blockAlign, true);
+	view.setUint16(34, bytesPerSample * 8, true);
+	writeAscii(36, 'data');
+	view.setUint32(40, dataSize, true);
+
+	for (i = 0; i < totalFrames; i++) {
+		t = i / sampleRate;
+
+		noise = (noise * 0.996) + ((Math.random() * 2 - 1) * 0.004);
+		air = (air * 0.985) + ((Math.random() * 2 - 1) * 0.0034);
+		foam = ((Math.random() * 2 - 1) * 0.5) - (foam * 0.72);
+		wind = (wind * 0.9984) + ((Math.random() * 2 - 1) * 0.0022);
+		hush = (hush * 0.992) + ((Math.random() * 2 - 1) * 0.0016);
+		drift = (drift * 0.9992) + ((Math.random() * 2 - 1) * 0.0012);
+		veil = (veil * 0.987) + ((Math.random() * 2 - 1) * 0.0026);
+
+		gust = 0.5 + 0.5 * Math.sin(Math.PI * 2 * t * 0.061 + 0.55 * Math.sin(Math.PI * 2 * t * 0.017));
+		swell = 0.5 + 0.5 * Math.sin(Math.PI * 2 * t * 0.137);
+
+		if (mode === 'offline') {
+			birdA = Math.max(0, Math.sin(Math.PI * 2 * t * 2.15));
+			birdA = birdA * birdA * birdA * birdA * birdA;
+			birdA *= Math.sin(Math.PI * 2 * t * (2600 + 380 * Math.sin(Math.PI * 2 * t * 0.27)));
+
+			birdB = Math.max(0, Math.sin(Math.PI * 2 * t * 1.42 + 1.4));
+			birdB = birdB * birdB * birdB * birdB * birdB * birdB;
+			birdB *= Math.sin(Math.PI * 2 * t * (3400 + 520 * Math.sin(Math.PI * 2 * t * 0.19)));
+
+			s =
+				(birdA * 0.075) +
+				(birdB * 0.055) +
+				(noise * 0.002);
+		} else if (variant === 1) {
+			s =
+				(wind * (0.060 + (gust * 0.032))) +
+				(hush * (0.026 + (swell * 0.014))) +
+				(veil * 0.012) +
+				(drift * (0.020 + (0.010 * Math.sin(Math.PI * 2 * t * 0.11)))) +
+				(Math.sin(Math.PI * 2 * t * (96 + 18 * Math.sin(Math.PI * 2 * t * 0.07))) * 0.0012) +
+				(Math.sin(Math.PI * 2 * t * (143 + 26 * Math.sin(Math.PI * 2 * t * 0.05 + 1.2))) * 0.0008) +
+				(noise * 0.004);
+		} else {
+			s =
+				(Math.sin(Math.PI * 2 * t * 78) * 0.0022) +
+				(Math.sin(Math.PI * 2 * t * 119) * 0.0014) +
+				(noise * 0.010) +
+				(air * (0.022 + (gust * 0.016))) +
+				(foam * (0.005 + (swell * 0.012)));
+		}
+
+		if (t < fadeSec) {
+			env = t / fadeSec;
+		} else if (t > seconds - fadeSec) {
+			env = (seconds - t) / fadeSec;
+		} else {
+			env = 1;
+		}
+
+		if (env < 0) env = 0;
+		if (env > 1) env = 1;
+
+		s *= env * 0.82;
+
+		if (s > 1) s = 1;
+		if (s < -1) s = -1;
+
+		for (ch = 0; ch < channels; ch++) {
+			view.setFloat32(off, s, true);
+			off += 4;
+		}
+	}
+
+	blobUrl = URL.createObjectURL(new Blob([ buf ], { type: 'audio/wav' }));
+	log('blob ready', {
+		mode: mode,
+		variant: variant,
+		seconds: seconds,
+		url: safeUrl(blobUrl)
+	});
+	return blobUrl;
+}
 
 	bootstrap();
 })();
