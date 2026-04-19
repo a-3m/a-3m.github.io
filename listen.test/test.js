@@ -514,7 +514,7 @@
 
 		if (shareLinkNode) {
 			shareLinkNode.href = shareUrl();
-			shareLinkNode.textContent = 'Open on another phone: ' + shareLabel();
+			shareLinkNode.textContent = shareLabel();
 		}
 
 		if (!qrNode) return;
