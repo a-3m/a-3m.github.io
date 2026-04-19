@@ -146,7 +146,7 @@ a {
 	display: block;
 	padding: 7px calc(10px + var(--a3m-safe-right)) 7px 18px;
 	border-radius: 999px 0 0 999px;
-	background: #aaa3;
+	background: #aaa4;
 	color: #000;
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
@@ -1000,3 +1000,37 @@ a {
 	border-color: transparent;
 	pointer-events: none;
 }
+
+
+.a3m-install-btn {
+	appearance: none;
+	position: absolute;
+	z-index: 400;
+	display: inline-block;
+	right: 0px;
+	bottom: 0px;
+	border: none;
+	border-radius: 20px 0px 0px 0px;
+	padding: 6px ;
+	padding-left: 12px ;
+	background: #aaa3;
+	color: #000;
+	font: inherit;
+	font-size: 16px;
+	line-height: 1.2;
+	letter-spacing: 0.08em;
+	text-transform: capitalize;
+	cursor: pointer;
+	text-align: left;
+}
+
+.a3m-install-btn:hover,
+.a3m-install-btn:focus-visible {
+	background: #aaf;
+	text-decoration: none;
+}
+
+.a3m-install-btn:focus {
+	outline: none;
+}
+

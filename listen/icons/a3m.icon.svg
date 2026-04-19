@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 1024 1024"
+   version="1.1"
+   id="svg6"
+   sodipodi:docname="a3m.icon.svg"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs10" />
+  <sodipodi:namedview
+     id="namedview8"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="0.32593203"
+     inkscape:cx="736.34984"
+     inkscape:cy="771.63327"
+     inkscape:window-width="1920"
+     inkscape:window-height="1131"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg6" />
+  <rect
+     width="1024"
+     height="1024"
+     fill="#662266"
+     id="rect2" />
+  <text
+     x="507.91379"
+     y="549.15039"
+     text-anchor="middle"
+     dominant-baseline="middle"
+     font-family="Arial, sans-serif"
+     font-size="334.571px"
+     font-weight="700"
+     letter-spacing="6"
+     fill="#ffffff"
+     opacity="1"
+     id="text4"
+     style="stroke-width:0.743492">A3M</text>
+</svg>
