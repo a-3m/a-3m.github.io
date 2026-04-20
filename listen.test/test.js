@@ -282,7 +282,7 @@
 	}
 
 	function modeLabel(){
-		return state.mode === 'offline' ? 'OFFLINE' : 'ONLINE';
+		return state.mode === 'offline' ? 'OFFLINE' : up();
 	}
 
 	function shareUrl(){
@@ -336,6 +336,10 @@
 		return 'SOURCE HOT ' + hotSourceLabel();
 	}
 
+	function up(){
+		return formatClock((Date.now() - state.startedAt) / 1000);
+	}
+
 	function coverSnapshot(){
 		let msg = '';
 		let sub = '';
@@ -360,7 +364,6 @@
 			lines: [
 				'FAIL ' + state.pingFail,
 				'LOOPS ' + state.loopCount,
-				'UP ' + formatClock((Date.now() - state.startedAt) / 1000),
 				'ONLINE ' + formatClock(onlineMsNow() / 1000),
 				'ENGINE ' + engineLabel(),
 				sourceLabel()
