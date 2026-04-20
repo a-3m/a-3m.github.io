@@ -43,6 +43,7 @@
 		}
 
 		.test-qr-box,
+		.test-mode-box,
 		.test-links,
 		.test-install,
 		.test-freeze {
@@ -58,7 +59,8 @@
 			padding: 10px;
 		}
 
-		.test-qr-title {
+		.test-qr-title,
+		.test-mode-title {
 			font-size: 14px;
 			line-height: 1.2;
 			color: rgba(255, 255, 255, 0.92);
@@ -81,11 +83,41 @@
 			height: auto;
 		}
 
+		.test-mode-box {
+			display: flex;
+			flex-direction: column;
+			align-items: stretch;
+			gap: 8px;
+			width: min(calc(100vw - 20px), 620px);
+			padding: 0 10px;
+			box-sizing: border-box;
+		}
+
+		.test-mode-select {
+			appearance: none;
+			width: 100%;
+			border: 1px solid rgba(255, 255, 255, 0.16);
+			border-radius: 12px;
+			padding: 10px 12px;
+			background: rgba(0, 0, 0, 0.62);
+			color: rgba(255, 255, 255, 0.96);
+			font: inherit;
+			font-size: 15px;
+			line-height: 1.3;
+			outline: none;
+		}
+
+		.test-mode-select:hover,
+		.test-mode-select:focus-visible {
+			background: rgba(255, 255, 255, 0.12);
+			border-color: rgba(170, 210, 255, 0.72);
+		}
+
 		.test-cover {
 			appearance: none;
 			position: absolute;
 			left: 50%;
-			top: 50%;
+			top: 55%;
 			width: min(72vmin, 560px);
 			height: min(72vmin, 560px);
 			transform: translate(-50%, -50%);
@@ -178,6 +210,17 @@
 			text-align: left;
 		}
 
+		.test-cover-stats span {
+			display: block;
+			max-width: 100%;
+		}
+
+		.test-cover-stats [data-role="cover-source"] {
+			font-size: 0.74em;
+			line-height: 1.02;
+			word-break: break-word;
+		}
+
 		.test-links {
 			position: absolute;
 			left: 50%;
@@ -265,6 +308,16 @@
 				height: 132px;
 			}
 
+			.test-mode-box {
+				width: calc(100vw - 16px);
+				padding: 0 8px;
+			}
+
+			.test-mode-select {
+				font-size: 14px;
+				padding: 9px 10px;
+			}
+
 			.test-links {
 				width: 80%;
 			}
@@ -301,12 +354,63 @@
 	<script src="/libs/a3m-qrcode.js?1"></script>
 </head>
 <body>
+<pre style="display: none">
+0 - fixed online one-loop - FIXED
+    Uses one fixed online audio source only: state.onlineUrls[0].
+    No hot-swap.
+    No graph mixer.
+    No safe background audio element.
+    On ping failure it does not switch to offline audio.
+    It keeps the same online loop source even when network checks fail.
+1 - active one loop - ACTIVE
+    Uses one active audio element with one current source at a time.
+    In practice it starts with the current online source and stays on one loop source.
+    No hot-swap.
+    No graph mixer.
+    No safe background audio element.
+    On ping failure it can switch between online and offline via swapBlob().
+2 - hot-swap loop - SWAP
+    Uses one main audio element.
+    Online mode alternates between two online loop blobs:
+        state.onlineUrls[0]
+        state.onlineUrls[1]
+    The swap happens on loop wrap.
+    No graph mixer.
+    No safe background audio element.
+    On ping failure it switches to offline blob.
+    When online returns it switches back to online blob logic.
+3 - mix-swap graph - MIXSWAP
+    Uses the same hot-swap behavior as mode 2 for the main audio element.
+    Also builds a Web Audio graph:
+        media element -> media gain
+        generated bed buffer -> bed gain
+        both -> master -> destination
+    The extra bed is mixed underneath the main media.
+    In offline mode bed level is lower; in online mode bed level is a bit higher.
+    No separate safe background HTML audio element.
+    On ping failure it switches to offline blob.
+6 - safe bg real audio + hot-swap - SAFE+SWAP
+    Uses two HTML audio elements:
+        1) main hot-swap audio element
+        2) separate background safe loop audio element
+    The background safe loop always uses state.onlineUrls[0].
+    The main audio element hot-swaps between onlineUrls[0] and onlineUrls[1] on loop wrap.
+    No Web Audio graph mixer.
+    This is the "safe bg real audio + hot-swap" test mode.
+    Source label on cover becomes:
+        SOURCE SAFE ON1 / HOT ON1 or SOURCE SAFE ON1 / HOT ON2
+    On ping failure the main audio can still switch mode,
+	but the extra safe background element remains the fixed safe loop source.
+	</pre>
 
 	<div class="test-ui" data-role="ui-wrap">
 		<div class="test-top">
 			<div class="test-qr-box" data-no-refresh="1">
-				<div class="test-qr-title">Scan this QR on another phone</div>
 				<div class="test-qr" data-role="qr"></div>
+			</div>
+
+			<div class="test-mode-box" data-no-refresh="1">
+				<select class="test-mode-select" data-act="mode-select" aria-label="Select test mode"></select>
 			</div>
 		</div>
 
@@ -321,6 +425,8 @@
 					<span data-role="cover-loops"></span>
 					<span data-role="cover-up"></span>
 					<span data-role="cover-online"></span>
+					<span data-role="cover-engine"></span>
+					<span data-role="cover-source"></span>
 				</span>
 			</span>
 		</button>
@@ -335,6 +441,6 @@
 
 	<button type="button" class="test-freeze" data-act="freeze-ui" aria-pressed="false">LIVE UI</button>
 
-	<script src="test.js?1222"></script>
+	<script src="test.js?102"></script>
 </body>
 </html>
