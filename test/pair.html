@@ -19,7 +19,11 @@ function log(s){
 }
 
 function wsUrl(){
-	return 'wss://a3m.another-art-another-music.workers.dev/ws/demo';
+	var ws = 'a3m.another-art-another-music.workers.dev/ws';
+	ws = 'aaam.duckdns.org/wp';
+	var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+	room = room || 'demo';
+	return proto + '//' + ws + '/' + encodeURIComponent(room);
 }
 
 function connect(){
