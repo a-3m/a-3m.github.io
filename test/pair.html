@@ -1,0 +1,60 @@
+<!-- file: pair.html -->
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>a3m pair test</title>
+
+<input id="msg" placeholder="text">
+<button id="send">send</button>
+<pre id="out"></pre>
+
+<script>
+var msg = document.getElementById('msg');
+var send = document.getElementById('send');
+var out = document.getElementById('out');
+var ws = 0;
+
+function log(s){
+	out.textContent += s + '\n';
+}
+
+function wsUrl(){
+	var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+	return proto + '//' + location.host + '/api/ws/room';
+}
+
+function connect(){
+	ws = new WebSocket(wsUrl());
+
+	ws.onopen = function(){
+		log('[open]');
+	};
+
+	ws.onclose = function(){
+		log('[close]');
+	};
+
+	ws.onerror = function(){
+		log('[error]');
+	};
+
+	ws.onmessage = function(e){
+		log('> ' + e.data);
+	};
+}
+
+function onSend(){
+	var s = msg.value;
+	if (!s || !ws || ws.readyState !== 1) return;
+	ws.send(s);
+	log('< ' + s);
+	msg.value = '';
+}
+
+send.onclick = onSend;
+msg.onkeydown = function(e){
+	if (e.key === 'Enter') onSend();
+};
+
+connect();
+</script>
